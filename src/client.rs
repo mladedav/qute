@@ -1,47 +1,39 @@
-use std::{future::Future, pin::Pin, task::{Poll, Context}, sync::Arc};
+use std::{
+    future::Future,
+    pin::Pin,
+    sync::Arc,
+    task::{Context, Poll},
+};
 
-use bytes::{Buf, BytesMut};
-use mqttbytes::{v5::{Connect, ConnAck, Packet}};
-use thiserror::Error as ThisError;
-use tokio::{net::TcpStream, io::{AsyncWriteExt, AsyncReadExt, AsyncRead, AsyncWrite}, sync::RwLock};
+use mqttbytes::v5::{ConnAck, Connect, Packet};
+use tokio::net::{
+    tcp::{OwnedReadHalf, OwnedWriteHalf},
+    TcpStream,
+};
 use tower::Service;
 
-const MAX_SIZE: usize = 1024;
-
-#[derive(ThisError, Debug)]
-pub enum Error {
-    #[error("Cannot deserialize MQTT message: {0:?}")]
-    MqttDeserialize(mqttbytes::Error),
-}
+use crate::{connection::Connection, error::Error};
 
 #[derive(Clone)]
-pub struct Client<T> {
-    stream: T,
+pub struct Client {
+    connection: Arc<Connection<OwnedReadHalf, OwnedWriteHalf>>,
 }
 
-impl Client<Arc<RwLock<TcpStream>>> {
-    // pub fn new(stream: TcpStream) -> Self {
-    // }
-
+impl Client {
     pub async fn connect() {
         let stream = TcpStream::connect("127.0.0.1:1883").await.unwrap();
-        // let stream = TcpStream::connect("10.200.200.3:1883").await.unwrap();
-        let stream = Arc::new(RwLock::new(stream));
+        let connection = Arc::new(Connection::with_stream(stream));
 
-        let mut client = Self {
-            stream,
-        };
+        let mut client = Self { connection };
 
         let connect = Connect::new("qute");
 
-        client.call(connect).await.unwrap();
+        let connack = client.call(connect).await.unwrap();
+        tracing::info!(packet = ?connack, "Received CONNACK as a response to CONNECT.");
     }
 }
 
-impl<T> Service<Connect> for Client<Arc<RwLock<T>>>
-where
-T: AsyncRead + AsyncWrite + Unpin + 'static,
-{
+impl Service<Connect> for Client {
     type Response = ConnAck;
 
     type Error = Error;
@@ -53,53 +45,17 @@ T: AsyncRead + AsyncWrite + Unpin + 'static,
     }
 
     fn call(&mut self, req: Connect) -> Self::Future {
-        let socket = self.stream.clone();
-        Box::pin(async move {
-            let mut buf = BytesMut::new();
-            req.write(&mut buf).unwrap();
-            let mut buf = buf.freeze();
-            while buf.has_remaining() {
-                socket.write().await.write_buf(&mut buf).await.unwrap();
-            }
-            let mut response = BytesMut::new();
-            loop {
-                if socket.write().await.read_buf(&mut response).await.unwrap() == 0 {
-                    tracing::debug!(len = response.len(), buf = ?response, "Unexpected EOF.");
-                    panic!("Unexpected EOF.");
-                }
+        let connection = self.connection.clone();
 
-                match mqttbytes::v5::read(&mut response, MAX_SIZE) {
-                    Err(mqttbytes::Error::InsufficientBytes(len)) => {
-                        tracing::debug!(required = len, "Insufficient bytes, more are required.");
-                    }
-                    Err(e) => {
-                        tracing::error!(error = ?e, "Unable to read packet.");
-                        return Err(Error::MqttDeserialize(e));
-                    }
-                    Ok(p) => {
-                        println!("Got packet {p:?}");
-                        if let Packet::ConnAck(connack) = p {
-                            return Ok(connack);
-                        }
-                    }
-                }
+        Box::pin(async move {
+            connection.send(Packet::Connect(req)).await.unwrap();
+
+            match connection.recv().await {
+                Err(err) => return Err(Error::MqttDeserialize(err)),
+                Ok(None) => panic!("Connection closed"),
+                Ok(Some(Packet::ConnAck(connack))) => return Ok(connack),
+                Ok(Some(packet)) => panic!("Unexpected packet: {packet:?}"),
             }
         })
     }
 }
-
-// impl Service<Packet> for Client {
-//     type Response = ();
-
-//     type Error = mqttbytes::Error;
-
-//     type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>>>>;
-
-//     fn poll_ready(&mut self, cx: &mut std::task::Context<'_>) -> std::task::Poll<Result<(), Self::Error>> {
-//         todo!()
-//     }
-
-//     fn call(&mut self, req: Packet) -> Self::Future {
-//         todo!()
-//     }
-// }
