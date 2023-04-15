@@ -3,16 +3,19 @@ use std::{
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
+    time::Duration,
 };
 
-use mqttbytes::v5::{ConnAck, Connect, Packet};
+use mqttbytes::v5::{ConnAck, Connect, Disconnect, Packet, Publish};
 use tokio::net::{
     tcp::{OwnedReadHalf, OwnedWriteHalf},
     TcpStream,
 };
 use tower::Service;
 
-use crate::{connection::Connection, error::Error};
+use crate::{
+    connection::Connection, error::Error, handlers::publish::PublishHandler, router::Router,
+};
 
 #[derive(Clone)]
 pub struct Client {
@@ -24,12 +27,57 @@ impl Client {
         let stream = TcpStream::connect("127.0.0.1:1883").await.unwrap();
         let connection = Arc::new(Connection::with_stream(stream));
 
-        let mut client = Self { connection };
+        let mut client = Self {
+            connection: connection.clone(),
+        };
 
         let connect = Connect::new("qute");
 
         let connack = client.call(connect).await.unwrap();
         tracing::info!(packet = ?connack, "Received CONNACK as a response to CONNECT.");
+
+        let publish = PublishHandler::new(connection.clone());
+
+        let mut router = Router {
+            ping: crate::handlers::ping::PingHandler,
+            publish,
+        };
+
+        let mut p1 = Publish::new("test", mqttbytes::QoS::AtMostOnce, *b"hello");
+        p1.pkid = 1;
+        let p1 = Packet::Publish(p1);
+        let mut p2 = Publish::new("test", mqttbytes::QoS::AtLeastOnce, *b"hello");
+        p2.pkid = 2;
+        let p2 = Packet::Publish(p2);
+        let mut p3 = Publish::new("test", mqttbytes::QoS::ExactlyOnce, *b"hello");
+        p3.pkid = 3;
+        let p3 = Packet::Publish(p3);
+
+        router.route_sent(p1.clone()).await;
+        router.route_sent(p2.clone()).await;
+        router.route_sent(p3.clone()).await;
+        // router.route_sent(Packet::PingReq).await;
+
+        tokio::spawn({
+            let connection = connection.clone();
+            async move {
+                while let Some(packet) = connection.recv().await.unwrap() {
+                    router.route_received(packet).await;
+                }
+                tracing::warn!("Connection closed.");
+            }
+        });
+
+        connection.send(p1).await.unwrap();
+        connection.send(p2).await.unwrap();
+        connection.send(p3).await.unwrap();
+
+        // connection.send(Packet::PingReq).await.unwrap();
+
+        let d = Disconnect::new();
+        connection.send(Packet::Disconnect(d)).await.unwrap();
+
+        tokio::time::sleep(Duration::from_secs(1)).await;
     }
 }
 

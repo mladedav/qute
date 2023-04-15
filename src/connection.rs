@@ -12,14 +12,14 @@ use tokio::{
 const MAX_SIZE: usize = 1024;
 
 pub(crate) struct Connection<R, W> {
-    reader: Mutex<R>,
+    reader: Mutex<(R, BytesMut)>,
     writer: Mutex<W>,
 }
 
 impl<R, W> Connection<R, W> {
     pub fn new(reader: R, writer: W) -> Self {
         Self {
-            reader: Mutex::new(reader),
+            reader: Mutex::new((reader, BytesMut::new())),
             writer: Mutex::new(writer),
         }
     }
@@ -79,22 +79,13 @@ where
     }
 
     pub async fn recv(&self) -> Result<Option<Packet>, mqttbytes::Error> {
-        let mut reader = self.reader.lock().await;
-
-        let mut buf = BytesMut::new();
+        let mut guard = self.reader.lock().await;
+        let (reader, buf) = &mut *guard;
 
         loop {
-            if reader.read_buf(&mut buf).await.unwrap() == 0 {
-                if buf.is_empty() {
-                    return Ok(None);
-                }
-                return Err(mqttbytes::Error::InsufficientBytes(usize::MAX));
-            }
-
-            match mqttbytes::v5::read(&mut buf, MAX_SIZE) {
+            match mqttbytes::v5::read(buf, MAX_SIZE) {
                 Err(mqttbytes::Error::InsufficientBytes(len)) => {
                     tracing::debug!(required = len, "Insufficient bytes, more are required.");
-                    continue;
                 }
                 Err(error) => {
                     tracing::error!(?error, "Unable to read packet.");
@@ -102,15 +93,15 @@ where
                 }
                 Ok(packet) => {
                     tracing::debug!(?packet, "Received packet.");
-                    if !buf.is_empty() {
-                        tracing::error!(
-                            len = buf.len(),
-                            "Buffer still contains data after reading a packet."
-                        );
-                        unimplemented!("Storing buffers is not supported yet.");
-                    }
                     return Ok(Some(packet));
                 }
+            }
+
+            if reader.read_buf(buf).await.unwrap() == 0 {
+                if buf.is_empty() {
+                    return Ok(None);
+                }
+                return Err(mqttbytes::Error::InsufficientBytes(usize::MAX));
             }
         }
     }
