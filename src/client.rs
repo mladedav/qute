@@ -6,7 +6,7 @@ use std::{
     time::Duration,
 };
 
-use mqttbytes::v5::{ConnAck, Connect, Disconnect, Packet, Publish};
+use mqttbytes::v5::{ConnAck, Connect, Disconnect, Packet, Publish, Subscribe};
 use tokio::net::{
     tcp::{OwnedReadHalf, OwnedWriteHalf},
     TcpStream,
@@ -14,7 +14,7 @@ use tokio::net::{
 use tower::Service;
 
 use crate::{
-    connection::Connection, error::Error, handlers::publish::PublishHandler, router::Router,
+    connection::Connection, error::Error, handlers::{publish::{SentPublishHandler, ReceivedPublishHandler}, subscribe::SubscribeHandler}, router::Router,
 };
 
 #[derive(Clone)]
@@ -36,11 +36,12 @@ impl Client {
         let connack = client.call(connect).await.unwrap();
         tracing::info!(packet = ?connack, "Received CONNACK as a response to CONNECT.");
 
-        let publish = PublishHandler::new(connection.clone());
-
         let mut router = Router {
+            connection: connection.clone(),
+            sent_publish: SentPublishHandler::new(),
+            received_publish: ReceivedPublishHandler::new(),
+            subscribe: SubscribeHandler::new(),
             ping: crate::handlers::ping::PingHandler,
-            publish,
         };
 
         let mut p1 = Publish::new("test", mqttbytes::QoS::AtMostOnce, *b"hello");
@@ -52,8 +53,12 @@ impl Client {
         let mut p3 = Publish::new("test", mqttbytes::QoS::ExactlyOnce, *b"hello");
         p3.pkid = 3;
         let p3 = Packet::Publish(p3);
+        let mut s1 = Subscribe::new("test", mqttbytes::QoS::ExactlyOnce);
+        s1.pkid = 4;
+        let s1 = Packet::Subscribe(s1);
 
         router.route_sent(p1.clone()).await;
+        router.route_sent(s1.clone()).await;
         router.route_sent(p2.clone()).await;
         router.route_sent(p3.clone()).await;
         // router.route_sent(Packet::PingReq).await;
@@ -68,15 +73,17 @@ impl Client {
             }
         });
 
-        connection.send(p1).await.unwrap();
-        connection.send(p2).await.unwrap();
-        connection.send(p3).await.unwrap();
+        connection.send(&p1).await.unwrap();
+        connection.send(&s1).await.unwrap();
+        connection.send(&p2).await.unwrap();
+        connection.send(&p3).await.unwrap();
 
         // connection.send(Packet::PingReq).await.unwrap();
 
-        let d = Disconnect::new();
-        connection.send(Packet::Disconnect(d)).await.unwrap();
 
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        let d = Disconnect::new();
+        connection.send(&Packet::Disconnect(d)).await.unwrap();
         tokio::time::sleep(Duration::from_secs(1)).await;
     }
 }
@@ -96,7 +103,7 @@ impl Service<Connect> for Client {
         let connection = self.connection.clone();
 
         Box::pin(async move {
-            connection.send(Packet::Connect(req)).await.unwrap();
+            connection.send(&Packet::Connect(req)).await.unwrap();
 
             match connection.recv().await {
                 Err(err) => return Err(Error::MqttDeserialize(err)),

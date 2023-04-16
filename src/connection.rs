@@ -1,5 +1,5 @@
 use bytes::{BufMut, BytesMut};
-use mqttbytes::v5::Packet;
+use mqttbytes::{v5::Packet, FixedHeader};
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
     net::{
@@ -37,7 +37,7 @@ where
     R: AsyncRead + Unpin,
     W: AsyncWrite + Unpin,
 {
-    pub async fn send(&self, packet: Packet) -> Result<(), mqttbytes::Error> {
+    pub async fn send(&self, packet: &Packet) -> Result<(), mqttbytes::Error> {
         let mut buf = BytesMut::new();
 
         match packet {
@@ -83,17 +83,20 @@ where
         let (reader, buf) = &mut *guard;
 
         loop {
-            match mqttbytes::v5::read(buf, MAX_SIZE) {
-                Err(mqttbytes::Error::InsufficientBytes(len)) => {
-                    tracing::debug!(required = len, "Insufficient bytes, more are required.");
-                }
-                Err(error) => {
-                    tracing::error!(?error, "Unable to read packet.");
-                    return Err(error);
-                }
-                Ok(packet) => {
-                    tracing::debug!(?packet, "Received packet.");
-                    return Ok(Some(packet));
+            if !buf.is_empty() {
+                match mqttbytes::v5::read(buf, MAX_SIZE) {
+                    Err(mqttbytes::Error::InsufficientBytes(len)) => {
+                        let packet_type = FixedHeader::new(*buf.iter().next().unwrap(), 0, 0).packet_type()?;
+                        tracing::debug!(?packet_type, required_bytes = len, "Insufficient bytes, more are required.");
+                    }
+                    Err(error) => {
+                        tracing::error!(?error, "Unable to read packet.");
+                        return Err(error);
+                    }
+                    Ok(packet) => {
+                        tracing::debug!(?packet, "Received packet.");
+                        return Ok(Some(packet));
+                    }
                 }
             }
 

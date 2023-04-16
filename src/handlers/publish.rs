@@ -1,55 +1,31 @@
 use std::{
     collections::{HashMap, HashSet},
-    sync::Arc,
 };
 
 use mqttbytes::{
     v5::{Packet, PubAck, PubComp, PubRec, PubRel, Publish},
     QoS,
 };
-use tokio::io::{AsyncRead, AsyncWrite};
 
-use crate::connection::Connection;
-
-pub(crate) struct PublishHandler<R, W> {
-    connection: Arc<Connection<R, W>>,
+pub(crate) struct SentPublishHandler {
     pending_ack: HashMap<u16, Publish>,
     pending_rec: HashMap<u16, Publish>,
-    pending_rel: HashMap<u16, Publish>,
     pending_comp: HashSet<u16>,
 }
 
-impl<R, W> PublishHandler<R, W>
-where
-    R: AsyncRead + Unpin,
-    W: AsyncWrite + Unpin,
-{
-    pub fn new(connection: Arc<Connection<R, W>>) -> Self {
-        Self {
-            connection,
-            pending_ack: HashMap::new(),
-            pending_rec: HashMap::new(),
-            pending_rel: HashMap::new(),
-            pending_comp: HashSet::new(),
-        }
-    }
-    pub async fn recv_publish(&mut self, publish: Publish) {
-        tracing::info!(?publish, "Received publish packet.");
-        match publish.qos {
-            QoS::AtMostOnce => (),
-            QoS::AtLeastOnce => {
-                let puback = PubAck::new(publish.pkid);
-                self.connection.send(Packet::PubAck(puback)).await.unwrap();
-            }
-            QoS::ExactlyOnce => {
-                let pubrec = PubRec::new(publish.pkid);
-                self.pending_rel.insert(publish.pkid, publish);
-                self.connection.send(Packet::PubRec(pubrec)).await.unwrap();
-            }
-        }
-    }
+pub(crate) struct ReceivedPublishHandler {
+    pending_rel: HashMap<u16, Publish>,
+}
 
-    pub fn send_publish(&mut self, publish: Publish) {
+impl SentPublishHandler {
+    pub fn new() -> Self {
+            Self {
+                pending_ack: HashMap::new(),
+                pending_rec: HashMap::new(),
+                pending_comp: HashSet::new(),
+            }
+        }
+    pub fn publish(&mut self, publish: Publish) -> Vec<Packet> {
         match publish.qos {
             QoS::AtMostOnce => (),
             QoS::AtLeastOnce => {
@@ -61,31 +37,81 @@ where
                 self.pending_rec.insert(id, publish);
             }
         }
+
+        Vec::new()
     }
 
-    pub fn puback(&mut self, puback: PubAck) {
+    pub fn puback(&mut self, puback: PubAck) -> Vec<Packet> {
         let id = puback.pkid;
         // TODO check reason
         self.pending_ack.remove(&id);
+
+        Vec::new()
     }
 
-    pub async fn pubrec(&mut self, pubrec: PubRec) {
+    pub fn pubrec(&mut self, pubrec: PubRec) -> Vec<Packet> {
         let id = pubrec.pkid;
         self.pending_rec.remove(&id);
         self.pending_comp.insert(id);
-        self.connection.send(Packet::PubRel(PubRel::new(id))).await;
+
+        vec![Packet::PubRel(PubRel::new(id))]
     }
 
-    pub async fn pubrel(&mut self, pubrel: PubRel) {
-        let id = pubrel.pkid;
-        self.pending_rel.remove(&id);
-        self.connection
-            .send(Packet::PubComp(PubComp::new(id)))
-            .await;
-    }
-
-    pub fn pubcomp(&mut self, pubcomp: PubComp) {
+    pub fn pubcomp(&mut self, pubcomp: PubComp) -> Vec<Packet> {
         let id = pubcomp.pkid;
         self.pending_comp.remove(&id);
+
+        Vec::new()
+    }
+
+    pub fn pubrel(&self, packet: PubRel) -> Vec<Packet> {
+        Vec::new()
+    }
+}
+
+impl ReceivedPublishHandler {
+    pub fn new() -> Self {
+            Self {
+                pending_rel: HashMap::new(),
+        }
+    }
+
+    pub fn publish(&mut self, publish: Publish) -> Vec<Packet> {
+        tracing::info!(?publish, "Received publish packet.");
+        let mut reply = Vec::new();
+
+        match publish.qos {
+            QoS::AtMostOnce => (),
+            QoS::AtLeastOnce => {
+                let puback = PubAck::new(publish.pkid);
+                reply.push(Packet::PubAck(puback));
+            }
+            QoS::ExactlyOnce => {
+                let pubrec = PubRec::new(publish.pkid);
+                self.pending_rel.insert(publish.pkid, publish);
+                reply.push(Packet::PubRec(pubrec));
+            }
+        }
+
+        reply
+    }
+
+    pub(crate) fn puback(&self, _puback: PubAck) -> Vec<Packet> {
+        Vec::new()
+    }
+
+    pub(crate) fn pubrec(&self, _puback: PubRec) -> Vec<Packet> {
+        Vec::new()
+    }
+
+    pub fn pubrel(&mut self, pubrel: PubRel) -> Vec<Packet> {
+        let id = pubrel.pkid;
+        self.pending_rel.remove(&id);
+
+        vec![Packet::PubComp(PubComp::new(id))]
+    }
+
+    pub fn pubcomp(&mut self, _pubcomp: PubComp) -> Vec<Packet> {
+        Vec::new()
     }
 }
