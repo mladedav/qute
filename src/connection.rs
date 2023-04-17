@@ -86,8 +86,13 @@ where
             if !buf.is_empty() {
                 match mqttbytes::v5::read(buf, MAX_SIZE) {
                     Err(mqttbytes::Error::InsufficientBytes(len)) => {
-                        let packet_type = FixedHeader::new(*buf.iter().next().unwrap(), 0, 0).packet_type()?;
-                        tracing::debug!(?packet_type, required_bytes = len, "Insufficient bytes, more are required.");
+                        let packet_type =
+                            FixedHeader::new(*buf.iter().next().unwrap(), 0, 0).packet_type()?;
+                        tracing::debug!(
+                            ?packet_type,
+                            required_bytes = len,
+                            "Insufficient bytes, more are required."
+                        );
                     }
                     Err(error) => {
                         tracing::error!(?error, "Unable to read packet.");

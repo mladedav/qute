@@ -8,8 +8,7 @@ impl PingHandler {
         Vec::new()
     }
 
-    pub(crate) fn ping(&self) -> Vec<Packet> {
+    pub(crate) fn ping(&self) {
         tracing::info!("Ping!");
-        Vec::new()
     }
 }

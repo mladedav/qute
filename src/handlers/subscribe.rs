@@ -1,8 +1,10 @@
 use std::collections::HashSet;
 
-use mqttbytes::v5::{Unsubscribe, UnsubAck, SubAck, Subscribe, Packet};
+use mqttbytes::v5::{Packet, SubAck, Subscribe, UnsubAck, Unsubscribe};
 
 pub(crate) struct SubscribeHandler {
+    next_sub_id: u16,
+    next_unsub_id: u16,
     pending_suback: HashSet<u16>,
     pending_unsuback: HashSet<u16>,
 }
@@ -10,15 +12,33 @@ pub(crate) struct SubscribeHandler {
 impl SubscribeHandler {
     pub(crate) fn new() -> SubscribeHandler {
         Self {
+            next_sub_id: 0,
+            next_unsub_id: 0,
             pending_suback: HashSet::new(),
             pending_unsuback: HashSet::new(),
         }
     }
 
-    pub fn subscribe(&mut self, subscribe: Subscribe) -> Vec<Packet> {
-        let id = subscribe.pkid;
+    fn next_sub_id(&mut self) -> u16 {
+        Self::next_id(&mut self.next_sub_id)
+    }
+
+    fn next_unsub_id(&mut self) -> u16 {
+        Self::next_id(&mut self.next_unsub_id)
+    }
+
+    fn next_id(id: &mut u16) -> u16 {
+        *id = id.wrapping_add(1);
+        if *id == 0 {
+            *id += 1;
+        }
+        *id
+    }
+
+    pub fn subscribe(&mut self, subscribe: &mut Subscribe) {
+        let id = self.next_sub_id();
+        subscribe.pkid = id;
         self.pending_suback.insert(id);
-        Vec::new()
     }
 
     pub fn suback(&mut self, suback: SubAck) -> Vec<Packet> {
@@ -28,10 +48,10 @@ impl SubscribeHandler {
         Vec::new()
     }
 
-    pub fn unsubscribe(&mut self, unsubscribe: Unsubscribe) -> Vec<Packet> {
-        let id = unsubscribe.pkid;
+    pub fn unsubscribe(&mut self, unsubscribe: &mut Unsubscribe) {
+        let id = self.next_unsub_id();
+        unsubscribe.pkid = id;
         self.pending_unsuback.insert(id);
-        Vec::new()
     }
 
     pub fn unsuback(&mut self, unsuback: UnsubAck) -> Vec<Packet> {

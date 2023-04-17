@@ -7,14 +7,23 @@ use std::{
 };
 
 use mqttbytes::v5::{ConnAck, Connect, Disconnect, Packet, Publish, Subscribe};
-use tokio::net::{
-    tcp::{OwnedReadHalf, OwnedWriteHalf},
-    TcpStream,
+use tokio::{
+    net::{
+        tcp::{OwnedReadHalf, OwnedWriteHalf},
+        TcpStream,
+    },
+    sync::Mutex,
 };
 use tower::Service;
 
 use crate::{
-    connection::Connection, error::Error, handlers::{publish::{SentPublishHandler, ReceivedPublishHandler}, subscribe::SubscribeHandler}, router::Router,
+    connection::Connection,
+    error::Error,
+    handlers::{
+        publish::{ReceivedPublishHandler, SentPublishHandler},
+        subscribe::SubscribeHandler,
+    },
+    router::Router,
 };
 
 #[derive(Clone)]
@@ -36,7 +45,7 @@ impl Client {
         let connack = client.call(connect).await.unwrap();
         tracing::info!(packet = ?connack, "Received CONNACK as a response to CONNECT.");
 
-        let mut router = Router {
+        let router = Router {
             connection: connection.clone(),
             sent_publish: SentPublishHandler::new(),
             received_publish: ReceivedPublishHandler::new(),
@@ -44,42 +53,29 @@ impl Client {
             ping: crate::handlers::ping::PingHandler,
         };
 
-        let mut p1 = Publish::new("test", mqttbytes::QoS::AtMostOnce, *b"hello");
-        p1.pkid = 1;
-        let p1 = Packet::Publish(p1);
-        let mut p2 = Publish::new("test", mqttbytes::QoS::AtLeastOnce, *b"hello");
-        p2.pkid = 2;
-        let p2 = Packet::Publish(p2);
-        let mut p3 = Publish::new("test", mqttbytes::QoS::ExactlyOnce, *b"hello");
-        p3.pkid = 3;
-        let p3 = Packet::Publish(p3);
-        let mut s1 = Subscribe::new("test", mqttbytes::QoS::ExactlyOnce);
-        s1.pkid = 4;
-        let s1 = Packet::Subscribe(s1);
-
-        router.route_sent(p1.clone()).await;
-        router.route_sent(s1.clone()).await;
-        router.route_sent(p2.clone()).await;
-        router.route_sent(p3.clone()).await;
-        // router.route_sent(Packet::PingReq).await;
+        let router = Arc::new(Mutex::new(router));
 
         tokio::spawn({
             let connection = connection.clone();
+            let router = router.clone();
             async move {
                 while let Some(packet) = connection.recv().await.unwrap() {
-                    router.route_received(packet).await;
+                    router.lock().await.route_received(packet).await;
                 }
                 tracing::warn!("Connection closed.");
             }
         });
 
-        connection.send(&p1).await.unwrap();
-        connection.send(&s1).await.unwrap();
-        connection.send(&p2).await.unwrap();
-        connection.send(&p3).await.unwrap();
+        let p1 = Packet::Publish(Publish::new("test", mqttbytes::QoS::AtMostOnce, *b"hello"));
+        let p2 = Packet::Publish(Publish::new("test", mqttbytes::QoS::AtLeastOnce, *b"hello"));
+        let p3 = Packet::Publish(Publish::new("test", mqttbytes::QoS::ExactlyOnce, *b"hello"));
+        let s1 = Packet::Subscribe(Subscribe::new("test", mqttbytes::QoS::ExactlyOnce));
 
-        // connection.send(Packet::PingReq).await.unwrap();
-
+        router.lock().await.route_sent(p1).await;
+        router.lock().await.route_sent(s1).await;
+        router.lock().await.route_sent(p2).await;
+        router.lock().await.route_sent(p3).await;
+        router.lock().await.route_sent(Packet::PingReq).await;
 
         tokio::time::sleep(Duration::from_secs(1)).await;
         let d = Disconnect::new();
