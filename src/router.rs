@@ -6,6 +6,7 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use crate::{
     connection::Connection,
     handlers::{
+        connect::ConnectHandler,
         ping::PingHandler,
         publish::{ReceivedPublishHandler, SentPublishHandler},
         subscribe::SubscribeHandler,
@@ -15,6 +16,7 @@ use crate::{
 pub(crate) struct Router<R, W> {
     pub connection: Arc<Connection<R, W>>,
 
+    pub connect: ConnectHandler,
     pub sent_publish: SentPublishHandler,
     pub received_publish: ReceivedPublishHandler,
     pub subscribe: SubscribeHandler,
@@ -31,7 +33,7 @@ where
 
         let responses = match packet {
             Packet::Connect(_) => unreachable!("Client cannot receive connect."),
-            Packet::ConnAck(packet) => todo!(),
+            Packet::ConnAck(packet) => self.connect.connack(packet),
             Packet::Disconnect(_) => unreachable!("Client cannot receive disconnect."),
 
             Packet::Publish(packet) => self.received_publish.publish(packet),
@@ -60,9 +62,9 @@ where
         tracing::debug!(?packet, "Routing sent packet.");
 
         match &mut packet {
-            Packet::Connect(packet) => todo!(),
+            Packet::Connect(packet) => self.connect.connect(packet),
             Packet::ConnAck(_) => unreachable!("Client cannot send connect acknowledgement."),
-            Packet::Disconnect(packet) => todo!(),
+            Packet::Disconnect(packet) => self.connect.disconnect(packet),
 
             Packet::Publish(packet) => self.sent_publish.publish(packet),
             Packet::PubAck(packet) => self.received_publish.puback(packet),
@@ -79,5 +81,7 @@ where
             Packet::PingReq => self.ping.ping(),
             Packet::PingResp => unreachable!("Client cannot send ping response."),
         };
+
+        self.connection.send(&packet).await.unwrap();
     }
 }

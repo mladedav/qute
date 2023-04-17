@@ -54,12 +54,12 @@ where
             Packet::UnsubAck(packet) => packet.write(&mut buf)?,
             Packet::Disconnect(packet) => packet.write(&mut buf)?,
             Packet::PingReq => {
-                buf.put_u8(0b_1100_000);
+                buf.put_u8(0b_1100_0000);
                 buf.put_u8(0);
                 2
             }
             Packet::PingResp => {
-                buf.put_u8(0b_1101_000);
+                buf.put_u8(0b_1101_0000);
                 buf.put_u8(0);
                 2
             }
@@ -105,10 +105,13 @@ where
                 }
             }
 
+            tracing::debug!(buffer.length = buf.len(), "Waiting for more data.");
             if reader.read_buf(buf).await.unwrap() == 0 {
                 if buf.is_empty() {
+                    tracing::debug!("No more data will be available in connection.");
                     return Ok(None);
                 }
+                tracing::debug!(buffer.length = buf.len(), "No more data will be available in connection but some data were not processed.");
                 return Err(mqttbytes::Error::InsufficientBytes(usize::MAX));
             }
         }
