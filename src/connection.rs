@@ -99,7 +99,7 @@ where
                         return Err(error);
                     }
                     Ok(packet) => {
-                        tracing::debug!(?packet, "Received packet.");
+                        tracing::trace!(?packet, "Received packet.");
                         return Ok(Some(packet));
                     }
                 }

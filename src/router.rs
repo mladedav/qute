@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{future::Future, pin::Pin, sync::Arc};
 
 use mqttbytes::v5::Packet;
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -7,7 +7,6 @@ use crate::{
     connection::Connection,
     handlers::{
         connect::ConnectHandler,
-        ping::PingHandler,
         publish::{ReceivedPublishHandler, SentPublishHandler},
         subscribe::SubscribeHandler,
     },
@@ -20,7 +19,6 @@ pub(crate) struct Router<R, W> {
     pub sent_publish: SentPublishHandler,
     pub received_publish: ReceivedPublishHandler,
     pub subscribe: SubscribeHandler,
-    pub ping: PingHandler,
 }
 
 impl<R, W> Router<R, W>
@@ -36,6 +34,9 @@ where
             Packet::ConnAck(packet) => self.connect.connack(packet),
             Packet::Disconnect(_) => unreachable!("Client cannot receive disconnect."),
 
+            Packet::PingReq => unreachable!("Client cannot receive ping request."),
+            Packet::PingResp => self.connect.pong(),
+
             Packet::Publish(packet) => self.received_publish.publish(packet),
             Packet::PubAck(packet) => self.sent_publish.puback(packet),
             Packet::PubRec(packet) => self.sent_publish.pubrec(packet),
@@ -47,9 +48,6 @@ where
 
             Packet::Unsubscribe(_) => unreachable!("Client cannot receive unsubscribe."),
             Packet::UnsubAck(packet) => self.subscribe.unsuback(packet),
-
-            Packet::PingReq => unreachable!("Client cannot receive ping request."),
-            Packet::PingResp => self.ping.pong(),
         };
 
         for response in responses {
@@ -58,13 +56,19 @@ where
         }
     }
 
-    pub async fn route_sent(&mut self, mut packet: Packet) {
+    pub async fn route_sent(
+        &mut self,
+        mut packet: Packet,
+    ) -> Pin<Box<dyn Future<Output = ()> + Send>> {
         tracing::debug!(?packet, "Routing sent packet.");
 
-        match &mut packet {
+        let future = match &mut packet {
             Packet::Connect(packet) => self.connect.connect(packet),
             Packet::ConnAck(_) => unreachable!("Client cannot send connect acknowledgement."),
             Packet::Disconnect(packet) => self.connect.disconnect(packet),
+
+            Packet::PingReq => self.connect.ping(),
+            Packet::PingResp => unreachable!("Client cannot send ping response."),
 
             Packet::Publish(packet) => self.sent_publish.publish(packet),
             Packet::PubAck(packet) => self.received_publish.puback(packet),
@@ -77,11 +81,10 @@ where
 
             Packet::Unsubscribe(packet) => self.subscribe.unsubscribe(packet),
             Packet::UnsubAck(_) => unreachable!("Client cannot send unsubscribe acknowledgement."),
-
-            Packet::PingReq => self.ping.ping(),
-            Packet::PingResp => unreachable!("Client cannot send ping response."),
         };
 
         self.connection.send(&packet).await.unwrap();
+
+        future
     }
 }

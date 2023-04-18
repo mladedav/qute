@@ -1,7 +1,6 @@
 use mqttbytes::v5::Packet;
 
 pub(super) mod connect;
-pub(super) mod ping;
 pub(super) mod publish;
 pub(super) mod subscribe;
 

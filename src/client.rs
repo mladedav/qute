@@ -1,6 +1,9 @@
-use std::{sync::Arc, time::Duration};
+use std::{future::Future, pin::Pin, sync::Arc};
 
-use mqttbytes::v5::{Connect, Disconnect, Packet, Publish, Subscribe};
+use mqttbytes::{
+    v5::{Connect, Packet, Publish},
+    QoS,
+};
 use tokio::{
     net::{
         tcp::{OwnedReadHalf, OwnedWriteHalf},
@@ -21,11 +24,11 @@ use crate::{
 
 #[derive(Clone)]
 pub struct Client {
-    _router: Arc<Mutex<Router<OwnedReadHalf, OwnedWriteHalf>>>,
+    router: Arc<Mutex<Router<OwnedReadHalf, OwnedWriteHalf>>>,
 }
 
 impl Client {
-    pub async fn connect() {
+    pub async fn connect() -> Self {
         let stream = TcpStream::connect("127.0.0.1:1883").await.unwrap();
         let connection = Arc::new(Connection::with_stream(stream));
 
@@ -35,7 +38,6 @@ impl Client {
             sent_publish: SentPublishHandler::new(),
             received_publish: ReceivedPublishHandler::new(),
             subscribe: SubscribeHandler::new(),
-            ping: crate::handlers::ping::PingHandler,
         };
 
         let router = Arc::new(Mutex::new(router));
@@ -52,23 +54,21 @@ impl Client {
         });
 
         let connect = Packet::Connect(Connect::new("qute"));
-        let p1 = Packet::Publish(Publish::new("test", mqttbytes::QoS::AtMostOnce, *b"hello"));
-        let p2 = Packet::Publish(Publish::new("test", mqttbytes::QoS::AtLeastOnce, *b"hello"));
-        let p3 = Packet::Publish(Publish::new("test", mqttbytes::QoS::ExactlyOnce, *b"hello"));
-        let s1 = Packet::Subscribe(Subscribe::new("test", mqttbytes::QoS::ExactlyOnce));
+        // Split so we do not hold the lock
+        let task = router.lock().await.route_sent(connect).await;
+        task.await;
 
-        router.lock().await.route_sent(connect).await;
-        tokio::time::sleep(Duration::from_secs(1)).await;
-        router.lock().await.route_sent(Packet::PingReq).await;
-        router.lock().await.route_sent(p1).await;
-        router.lock().await.route_sent(s1).await;
-        router.lock().await.route_sent(p2).await;
-        router.lock().await.route_sent(p3).await;
-        router.lock().await.route_sent(Packet::PingReq).await;
+        Self { router }
+    }
 
-        tokio::time::sleep(Duration::from_secs(1)).await;
-        let d = Disconnect::new();
-        connection.send(&Packet::Disconnect(d)).await.unwrap();
-        tokio::time::sleep(Duration::from_secs(1)).await;
+    pub async fn publish(
+        &self,
+        topic: &str,
+        qos: QoS,
+        payload: &[u8],
+    ) -> Pin<Box<dyn Future<Output = ()>>> {
+        let packet = Packet::Publish(Publish::new(topic, qos, payload));
+
+        self.router.lock().await.route_sent(packet).await
     }
 }
