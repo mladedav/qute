@@ -1,8 +1,6 @@
-use std::collections::HashMap;
-
 use mqttbytes::{v5::Publish, QoS};
 use qute::{Client, HandlerRouter};
-use tokio::{sync::Mutex, task::yield_now};
+use tokio::{task::yield_now};
 use tracing_subscriber::util::SubscriberInitExt;
 
 #[tokio::main]
@@ -12,17 +10,14 @@ async fn main() {
         .finish()
         .init();
 
-    let mut router = HandlerRouter {
-        handlers: Mutex::new(HashMap::new()),
-    };
+    let mut router = HandlerRouter::new();
 
     router
         .add(String::from("test"), |_publish: Publish| {
             tracing::warn!("Test handler!");
-        })
-        .await;
+        });
 
-    router.add(String::from("foo/bar"), foobar).await;
+    router.add(String::from("foo/bar"), foobar);
 
     let client = Client::connect(router).await;
     client.subscribe("test").await.await;

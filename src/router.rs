@@ -1,11 +1,10 @@
-use std::{collections::HashMap, convert::Infallible, future::Future, pin::Pin, sync::Arc};
+use std::{convert::Infallible, future::Future, pin::Pin, sync::Arc};
 
 use mqttbytes::v5::{Packet, Publish};
 use tokio::{
     io::{AsyncRead, AsyncWrite},
-    sync::Mutex,
 };
-use tower::util::BoxCloneService;
+use tower::{util::BoxCloneService, ServiceExt};
 use tower::Service;
 
 use crate::{
@@ -96,23 +95,35 @@ where
 }
 
 pub struct HandlerRouter {
-    pub handlers: Mutex<HashMap<String, BoxCloneService<Publish, (), Infallible>>>,
+    inner: matchit::Router<BoxCloneService<Publish, (), Infallible>>,
+
 }
 
 impl HandlerRouter {
-    pub async fn add<const ASYNC: bool>(&mut self, route: String, handler: impl Handler<ASYNC>) {
-        let handler = handler.with_state(());
-        let handler = BoxCloneService::new(handler);
-        self.handlers.lock().await.insert(route, handler);
+    pub fn new() -> Self {
+        Self {
+            inner: matchit::Router::new(),
+        }
     }
 
-    pub async fn handle(&self, publish: Publish) {
-        let Some(mut handler) = self.handlers.lock().await.get(&publish.topic).map(Clone::clone) else {
-            tracing::error!(topic = %publish.topic, ?publish, "No handler found.");
-            return;
-        };
-        // TODO
-        // We should call poll_ready, otherwise call may panic.
-        handler.call(publish).await.unwrap();
+    pub fn add<const ASYNC: bool>(&mut self, route: String, handler: impl Handler<ASYNC>) {
+        let handler = handler.with_state(());
+        let handler = BoxCloneService::new(handler);
+        self.inner.insert(route, handler).unwrap();
+    }
+
+    pub async fn handle(&mut self, publish: Publish) {
+        if let Ok(router_match) = self.inner.at_mut(&publish.topic) {
+            let service = router_match.value.ready().await.expect("Error type is Infallible.");
+            service.call(publish.clone()).await.expect("Error type is Infallible.");
+        } else {
+            tracing::debug!(topic = %publish.topic, "No matching route found.");
+        }
+    }
+}
+
+impl Default for HandlerRouter {
+    fn default() -> Self {
+        Self::new()
     }
 }

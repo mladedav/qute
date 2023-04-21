@@ -19,7 +19,7 @@ use crate::{
         publish::{ReceivedPublishHandler, SentPublishHandler},
         subscribe::SubscribeHandler,
     },
-    router::{HandlerRouter, Router},
+    router::Router, HandlerRouter,
 };
 
 #[derive(Clone)]
