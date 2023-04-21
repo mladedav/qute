@@ -1,5 +1,8 @@
-use mqttbytes::QoS;
-use qute::Client;
+use std::collections::HashMap;
+
+use mqttbytes::{v5::Publish, QoS};
+use qute::{Client, HandlerRouter};
+use tokio::{sync::Mutex, task::yield_now};
 use tracing_subscriber::util::SubscriberInitExt;
 
 #[tokio::main]
@@ -9,7 +12,21 @@ async fn main() {
         .finish()
         .init();
 
-    let client = Client::connect().await;
+    let mut router = HandlerRouter {
+        handlers: Mutex::new(HashMap::new()),
+    };
+
+    router
+        .add(String::from("test"), |_publish: Publish| {
+            tracing::warn!("Test handler!");
+        })
+        .await;
+
+    router.add(String::from("foo/bar"), foobar).await;
+
+    let client = Client::connect(router).await;
+    client.subscribe("test").await.await;
+    client.subscribe("foo/bar").await.await;
     client
         .publish("test", QoS::AtMostOnce, b"hello")
         .await
@@ -22,6 +39,16 @@ async fn main() {
         .publish("test", QoS::ExactlyOnce, b"hello complicated world")
         .await
         .await;
+    client
+        .publish("foo/bar", QoS::AtMostOnce, b"hello")
+        .await
+        .await;
+    client.publish("foo", QoS::AtMostOnce, b"hello").await.await;
 
     tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+}
+
+async fn foobar(_publish: Publish) {
+    yield_now().await;
+    tracing::warn!("Async FOOBAR handler!");
 }

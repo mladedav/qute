@@ -1,7 +1,12 @@
-use std::{future::Future, pin::Pin, sync::Arc};
+use std::{collections::HashMap, convert::Infallible, future::Future, pin::Pin, sync::Arc};
 
-use mqttbytes::v5::Packet;
-use tokio::io::{AsyncRead, AsyncWrite};
+use mqttbytes::v5::{Packet, Publish};
+use tokio::{
+    io::{AsyncRead, AsyncWrite},
+    sync::Mutex,
+};
+use tower::util::BoxCloneService;
+use tower::Service;
 
 use crate::{
     connection::Connection,
@@ -10,6 +15,7 @@ use crate::{
         publish::{ReceivedPublishHandler, SentPublishHandler},
         subscribe::SubscribeHandler,
     },
+    Handler,
 };
 
 pub(crate) struct Router<R, W> {
@@ -37,7 +43,7 @@ where
             Packet::PingReq => unreachable!("Client cannot receive ping request."),
             Packet::PingResp => self.connect.pong(),
 
-            Packet::Publish(packet) => self.received_publish.publish(packet),
+            Packet::Publish(packet) => self.received_publish.publish(packet).await,
             Packet::PubAck(packet) => self.sent_publish.puback(packet),
             Packet::PubRec(packet) => self.sent_publish.pubrec(packet),
             Packet::PubRel(packet) => self.received_publish.pubrel(packet),
@@ -86,5 +92,27 @@ where
         self.connection.send(&packet).await.unwrap();
 
         future
+    }
+}
+
+pub struct HandlerRouter {
+    pub handlers: Mutex<HashMap<String, BoxCloneService<Publish, (), Infallible>>>,
+}
+
+impl HandlerRouter {
+    pub async fn add<const ASYNC: bool>(&mut self, route: String, handler: impl Handler<ASYNC>) {
+        let handler = handler.with_state(());
+        let handler = BoxCloneService::new(handler);
+        self.handlers.lock().await.insert(route, handler);
+    }
+
+    pub async fn handle(&self, publish: Publish) {
+        let Some(mut handler) = self.handlers.lock().await.get(&publish.topic).map(Clone::clone) else {
+            tracing::error!(topic = %publish.topic, ?publish, "No handler found.");
+            return;
+        };
+        // TODO
+        // We should call poll_ready, otherwise call may panic.
+        handler.call(publish).await.unwrap();
     }
 }

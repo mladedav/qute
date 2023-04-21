@@ -11,6 +11,8 @@ use mqttbytes::{
 };
 use tokio::sync::Notify;
 
+use crate::HandlerRouter;
+
 pub(crate) struct SentPublishHandler {
     next_id: u16,
     pending_ack: HashMap<u16, (Publish, Arc<Notify>)>,
@@ -20,6 +22,7 @@ pub(crate) struct SentPublishHandler {
 
 pub(crate) struct ReceivedPublishHandler {
     pending_rel: HashMap<u16, Publish>,
+    publish_router: HandlerRouter,
 }
 
 impl SentPublishHandler {
@@ -97,15 +100,18 @@ impl SentPublishHandler {
 }
 
 impl ReceivedPublishHandler {
-    pub fn new() -> Self {
+    pub fn new(publish_router: HandlerRouter) -> Self {
         Self {
             pending_rel: HashMap::new(),
+            publish_router,
         }
     }
 
-    pub fn publish(&mut self, publish: Publish) -> Vec<Packet> {
+    pub async fn publish(&mut self, publish: Publish) -> Vec<Packet> {
         tracing::info!(?publish, "Received publish packet.");
         let mut reply = Vec::new();
+
+        self.publish_router.handle(publish.clone()).await;
 
         match publish.qos {
             QoS::AtMostOnce => (),

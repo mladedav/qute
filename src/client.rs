@@ -1,7 +1,7 @@
 use std::{future::Future, pin::Pin, sync::Arc};
 
 use mqttbytes::{
-    v5::{Connect, Packet, Publish},
+    v5::{Connect, Packet, Publish, Subscribe},
     QoS,
 };
 use tokio::{
@@ -19,7 +19,7 @@ use crate::{
         publish::{ReceivedPublishHandler, SentPublishHandler},
         subscribe::SubscribeHandler,
     },
-    router::Router,
+    router::{HandlerRouter, Router},
 };
 
 #[derive(Clone)]
@@ -28,7 +28,7 @@ pub struct Client {
 }
 
 impl Client {
-    pub async fn connect() -> Self {
+    pub async fn connect(publish_router: HandlerRouter) -> Self {
         let stream = TcpStream::connect("127.0.0.1:1883").await.unwrap();
         let connection = Arc::new(Connection::with_stream(stream));
 
@@ -36,7 +36,7 @@ impl Client {
             connection: connection.clone(),
             connect: ConnectHandler::new(),
             sent_publish: SentPublishHandler::new(),
-            received_publish: ReceivedPublishHandler::new(),
+            received_publish: ReceivedPublishHandler::new(publish_router),
             subscribe: SubscribeHandler::new(),
         };
 
@@ -68,6 +68,12 @@ impl Client {
         payload: &[u8],
     ) -> Pin<Box<dyn Future<Output = ()>>> {
         let packet = Packet::Publish(Publish::new(topic, qos, payload));
+
+        self.router.lock().await.route_sent(packet).await
+    }
+
+    pub async fn subscribe(&self, topic: &str) -> Pin<Box<dyn Future<Output = ()>>> {
+        let packet = Packet::Subscribe(Subscribe::new(topic, QoS::ExactlyOnce));
 
         self.router.lock().await.route_sent(packet).await
     }
