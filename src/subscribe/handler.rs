@@ -86,20 +86,6 @@ impl<const ASYNC: bool, H, S> HandlerService<ASYNC, H, S> {
     }
 }
 
-// impl<H, S> MqttService for HandlerService<H, S>
-// where
-// H: Handler<S> + Clone,
-// S: Clone,
-// {
-//     type Future = H::Future;
-
-//     fn process(&mut self, publish: Publish) -> Self::Future {
-//         let handler = self.handler.clone();
-//         let state = self.state.clone();
-//         handler.call(publish, state)
-//     }
-// }
-
 impl<const A: bool, H, S> Service<Publish> for HandlerService<A, H, S>
 where
     H: Handler<A, S> + Clone + Send + 'static,

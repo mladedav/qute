@@ -1,2 +1,2 @@
 pub(crate) mod handler;
-pub(crate) mod serivce;
+pub(crate) mod router;

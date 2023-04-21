@@ -1,6 +1,6 @@
 use mqttbytes::{v5::Publish, QoS};
 use qute::{Client, HandlerRouter};
-use tokio::{task::yield_now};
+use tokio::task::yield_now;
 use tracing_subscriber::util::SubscriberInitExt;
 
 #[tokio::main]
@@ -12,10 +12,9 @@ async fn main() {
 
     let mut router = HandlerRouter::new();
 
-    router
-        .add(String::from("test"), |_publish: Publish| {
-            tracing::warn!("Test handler!");
-        });
+    router.add(String::from("test"), |_publish: Publish| {
+        tracing::warn!("Test handler!");
+    });
 
     router.add(String::from("foo/bar"), foobar);
 

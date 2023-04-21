@@ -1,11 +1,7 @@
-use std::{convert::Infallible, future::Future, pin::Pin, sync::Arc};
+use std::{future::Future, pin::Pin, sync::Arc};
 
-use mqttbytes::v5::{Packet, Publish};
-use tokio::{
-    io::{AsyncRead, AsyncWrite},
-};
-use tower::{util::BoxCloneService, ServiceExt};
-use tower::Service;
+use mqttbytes::v5::Packet;
+use tokio::io::{AsyncRead, AsyncWrite};
 
 use crate::{
     connection::Connection,
@@ -14,7 +10,6 @@ use crate::{
         publish::{ReceivedPublishHandler, SentPublishHandler},
         subscribe::SubscribeHandler,
     },
-    Handler,
 };
 
 pub(crate) struct Router<R, W> {
@@ -91,39 +86,5 @@ where
         self.connection.send(&packet).await.unwrap();
 
         future
-    }
-}
-
-pub struct HandlerRouter {
-    inner: matchit::Router<BoxCloneService<Publish, (), Infallible>>,
-
-}
-
-impl HandlerRouter {
-    pub fn new() -> Self {
-        Self {
-            inner: matchit::Router::new(),
-        }
-    }
-
-    pub fn add<const ASYNC: bool>(&mut self, route: String, handler: impl Handler<ASYNC>) {
-        let handler = handler.with_state(());
-        let handler = BoxCloneService::new(handler);
-        self.inner.insert(route, handler).unwrap();
-    }
-
-    pub async fn handle(&mut self, publish: Publish) {
-        if let Ok(router_match) = self.inner.at_mut(&publish.topic) {
-            let service = router_match.value.ready().await.expect("Error type is Infallible.");
-            service.call(publish.clone()).await.expect("Error type is Infallible.");
-        } else {
-            tracing::debug!(topic = %publish.topic, "No matching route found.");
-        }
-    }
-}
-
-impl Default for HandlerRouter {
-    fn default() -> Self {
-        Self::new()
     }
 }
