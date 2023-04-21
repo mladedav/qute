@@ -111,15 +111,17 @@ impl ReceivedPublishHandler {
         tracing::info!(?publish, "Received publish packet.");
         let mut reply = Vec::new();
 
-        self.publish_router.handle(publish.clone()).await;
-
         match publish.qos {
-            QoS::AtMostOnce => (),
+            QoS::AtMostOnce => self.publish_router.handle(publish.clone()).await,
             QoS::AtLeastOnce => {
+                self.publish_router.handle(publish.clone()).await;
                 let puback = PubAck::new(publish.pkid);
                 reply.push(Packet::PubAck(puback));
             }
             QoS::ExactlyOnce => {
+                if !self.pending_rel.contains_key(&publish.pkid) {
+                    self.publish_router.handle(publish.clone()).await;
+                }
                 let pubrec = PubRec::new(publish.pkid);
                 self.pending_rel.insert(publish.pkid, publish);
                 reply.push(Packet::PubRec(pubrec));
