@@ -1,5 +1,5 @@
 use mqttbytes::{v5::Publish, QoS};
-use qute::{Client, HandlerRouter};
+use qute::{Client, HandlerRouter, State};
 use tokio::task::yield_now;
 use tracing_subscriber::util::SubscriberInitExt;
 
@@ -18,7 +18,7 @@ async fn run() {
 
     router.add(
         String::from("test"),
-        |_publish: Publish, state: &str| {
+        |_publish: Publish, State(state): State<&str>| {
             tracing::warn!("Test handler!");
             tracing::warn!(?state, "Now with state!");
         },

@@ -9,6 +9,8 @@ use std::{
 use mqttbytes::v5::Publish;
 use tower::Service;
 
+use super::extractor::FromPublish;
+
 // use super::serivce::MqttService;
 
 pub trait Handler<const ASYNC: bool, M, S = ()>: Clone + Send + Sized + 'static
@@ -42,24 +44,60 @@ where
 
 impl<F, S: Clone + Send> Handler<false, (), S> for F
 where
-    F: FnOnce(Publish) + Clone + Send + 'static,
+    F: FnOnce() + Clone + Send + 'static,
 {
     type Future = Ready<()>;
 
-    fn call(self, req: Publish, _state: S) -> Self::Future {
-        self(req);
+    fn call(self, _publish: Publish, _state: S) -> Self::Future {
+        self();
         ready(())
     }
 }
 
-impl<F, S: Clone + Send> Handler<false, (S,), S> for F
+impl<F, T1, S: Clone + Send> Handler<false, (T1,), S> for F
 where
-    F: FnOnce(Publish, S) + Clone + Send + 'static,
+    F: FnOnce(T1) + Clone + Send + 'static,
+    T1: FromPublish<S>,
 {
     type Future = Ready<()>;
 
-    fn call(self, req: Publish, state: S) -> Self::Future {
-        self(req, state);
+    fn call(self, publish: Publish, state: S) -> Self::Future {
+        let t1 = T1::from_publish(&publish, &state).unwrap();
+        self(t1);
+        ready(())
+    }
+}
+
+impl<F, T1, T2, S: Clone + Send> Handler<false, (T1, T2), S> for F
+where
+    F: FnOnce(T1, T2) + Clone + Send + 'static,
+    T1: FromPublish<S>,
+    T2: FromPublish<S>,
+{
+    type Future = Ready<()>;
+
+    fn call(self, publish: Publish, state: S) -> Self::Future {
+        let t1 = T1::from_publish(&publish, &state).unwrap();
+        let t2 = T2::from_publish(&publish, &state).unwrap();
+        self(t1, t2);
+        ready(())
+    }
+}
+
+impl<F, T1, T2, T3, S: Clone + Send> Handler<false, (T1, T2, T3), S> for F
+where
+    F: FnOnce(T1, T2, T3) + Clone + Send + 'static,
+    T1: FromPublish<S>,
+    T2: FromPublish<S>,
+    T3: FromPublish<S>,
+{
+    type Future = Ready<()>;
+
+    fn call(self, publish: Publish, state: S) -> Self::Future {
+        let t1 = T1::from_publish(&publish, &state).unwrap();
+        let t2 = T2::from_publish(&publish, &state).unwrap();
+        let t3 = T3::from_publish(&publish, &state).unwrap();
+        self(t1, t2, t3);
         ready(())
     }
 }
@@ -71,9 +109,9 @@ where
 {
     type Future = Pin<Box<dyn Future<Output = ()> + Send>>;
 
-    fn call(self, req: Publish, _state: S) -> Self::Future {
+    fn call(self, publish: Publish, _state: S) -> Self::Future {
         Box::pin(async move {
-            self(req).await;
+            self(publish).await;
         })
     }
 }
