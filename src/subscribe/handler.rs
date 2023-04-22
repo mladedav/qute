@@ -1,6 +1,7 @@
 use std::{
     convert::Infallible,
     future::{ready, Future, Ready},
+    marker::PhantomData,
     pin::Pin,
     task::{Context, Poll},
 };
@@ -10,7 +11,10 @@ use tower::Service;
 
 // use super::serivce::MqttService;
 
-pub trait Handler<const ASYNC: bool, S = ()>: Clone + Send + Sized + 'static {
+pub trait Handler<const ASYNC: bool, M, S = ()>: Clone + Send + Sized + 'static
+where
+    S: Clone + Send,
+{
     type Future: Future<Output = ()> + Send + 'static;
 
     // Required method
@@ -31,12 +35,12 @@ pub trait Handler<const ASYNC: bool, S = ()>: Clone + Send + Sized + 'static {
     // }
 
     /// Convert the handler into a [`Service`] by providing the state
-    fn with_state(self, state: S) -> HandlerService<ASYNC, Self, S> {
+    fn with_state(self, state: S) -> HandlerService<ASYNC, Self, M, S> {
         HandlerService::new(self, state)
     }
 }
 
-impl<F, S> Handler<false, S> for F
+impl<F, S: Clone + Send> Handler<false, (), S> for F
 where
     F: FnOnce(Publish) + Clone + Send + 'static,
 {
@@ -48,7 +52,19 @@ where
     }
 }
 
-impl<F, Fut, S> Handler<true, S> for F
+impl<F, S: Clone + Send> Handler<false, (S,), S> for F
+where
+    F: FnOnce(Publish, S) + Clone + Send + 'static,
+{
+    type Future = Ready<()>;
+
+    fn call(self, req: Publish, state: S) -> Self::Future {
+        self(req, state);
+        ready(())
+    }
+}
+
+impl<F, Fut, S: Clone + Send> Handler<true, (), S> for F
 where
     F: FnOnce(Publish) -> Fut + Clone + Send + 'static,
     Fut: Future<Output = ()> + Send,
@@ -62,12 +78,13 @@ where
     }
 }
 
-pub struct HandlerService<const ASYNC: bool, H, S> {
+pub struct HandlerService<const ASYNC: bool, H, M, S> {
     handler: H,
     state: S,
+    _phantom: PhantomData<M>,
 }
 
-impl<const ASYNC: bool, H, S> Clone for HandlerService<ASYNC, H, S>
+impl<const ASYNC: bool, H, M, S> Clone for HandlerService<ASYNC, H, M, S>
 where
     H: Clone,
     S: Clone,
@@ -76,19 +93,24 @@ where
         Self {
             handler: self.handler.clone(),
             state: self.state.clone(),
+            _phantom: self._phantom,
         }
     }
 }
 
-impl<const ASYNC: bool, H, S> HandlerService<ASYNC, H, S> {
+impl<const ASYNC: bool, H, M, S> HandlerService<ASYNC, H, M, S> {
     pub fn new(handler: H, state: S) -> Self {
-        HandlerService { handler, state }
+        HandlerService {
+            handler,
+            state,
+            _phantom: PhantomData,
+        }
     }
 }
 
-impl<const A: bool, H, S> Service<Publish> for HandlerService<A, H, S>
+impl<const A: bool, H, M, S> Service<Publish> for HandlerService<A, H, M, S>
 where
-    H: Handler<A, S> + Clone + Send + 'static,
+    H: Handler<A, M, S> + Clone + Send + 'static,
     S: Clone + Send + 'static,
 {
     type Response = ();

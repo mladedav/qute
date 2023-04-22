@@ -5,6 +5,10 @@ use tracing_subscriber::util::SubscriberInitExt;
 
 #[tokio::main]
 async fn main() {
+    run().await;
+}
+
+async fn run() {
     tracing_subscriber::fmt()
         .with_env_filter("qute=debug,info")
         .finish()
@@ -12,11 +16,16 @@ async fn main() {
 
     let mut router = HandlerRouter::new();
 
-    router.add(String::from("test"), |_publish: Publish| {
-        tracing::warn!("Test handler!");
-    });
+    router.add(
+        String::from("test"),
+        |_publish: Publish, state: &str| {
+            tracing::warn!("Test handler!");
+            tracing::warn!(?state, "Now with state!");
+        },
+        "This is the state.",
+    );
 
-    router.add(String::from("foo/bar"), foobar);
+    router.add(String::from("foo/bar"), foobar, ());
 
     let client = Client::connect(router).await;
     client.subscribe("test").await.await;

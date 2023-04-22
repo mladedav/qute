@@ -16,8 +16,13 @@ impl HandlerRouter {
         }
     }
 
-    pub fn add<const ASYNC: bool>(&mut self, route: String, handler: impl Handler<ASYNC>) {
-        let handler = handler.with_state(());
+    pub fn add<const ASYNC: bool, M: Send + 'static, S: Clone + Send + 'static>(
+        &mut self,
+        route: String,
+        handler: impl Handler<ASYNC, M, S>,
+        state: S,
+    ) {
+        let handler = handler.with_state(state);
         let handler = BoxCloneService::new(handler);
         self.inner.insert(route, handler).unwrap();
     }
