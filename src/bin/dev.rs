@@ -1,5 +1,7 @@
+use std::convert::Infallible;
+
 use mqttbytes::{v5::Publish, QoS};
-use qute::{Client, HandlerRouter, State};
+use qute::{Client, FromPublish, HandlerRouter, State, Topic};
 use tokio::task::yield_now;
 use tracing_subscriber::util::SubscriberInitExt;
 
@@ -51,7 +53,31 @@ async fn run() {
     tokio::time::sleep(std::time::Duration::from_secs(1)).await;
 }
 
-async fn foobar(_p1: Publish, _p2: Publish, _p3: Publish, _p4: Publish, _p5: Publish, _p6: Publish, _p7: Publish) {
+async fn foobar(
+    _publish: Publish,
+    qos: QoS,
+    Topic(topic): Topic,
+    custom: Custom,
+    _p5: Publish,
+    _p6: Publish,
+    _p7: Publish,
+) {
     yield_now().await;
-    tracing::warn!("Async FOOBAR handler with quite a few extractors!");
+    tracing::warn!(
+        ?qos,
+        ?topic,
+        ?custom,
+        "Async FOOBAR handler with quite a few extractors!"
+    );
+}
+
+#[derive(Debug)]
+struct Custom(String);
+
+impl<S> FromPublish<S> for Custom {
+    type Rejection = Infallible;
+
+    fn from_publish(_publish: &Publish, _state: &S) -> Result<Self, Self::Rejection> {
+        Ok(Custom(String::from("My implementation of FromPublish.")))
+    }
 }
