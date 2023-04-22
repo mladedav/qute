@@ -1,39 +1,95 @@
-use std::convert::Infallible;
+use std::{collections::HashMap, convert::Infallible};
 
 use mqttbytes::v5::Publish;
 use tower::{util::BoxCloneService, Service, ServiceExt};
 
-use super::handler::Handler;
+use crate::Handler;
+
+use super::handler::ErasedHandler;
+
+enum RouteHandler<S> {
+    WithoutState(Box<dyn ErasedHandler<S>>),
+    WithState(BoxCloneService<Publish, (), Infallible>),
+}
+
+impl<S: Clone> Clone for RouteHandler<S> {
+    fn clone(&self) -> Self {
+        match self {
+            Self::WithoutState(handler) => Self::WithoutState(handler.clone_boxed()),
+            Self::WithState(service) => Self::WithState(service.clone()),
+        }
+    }
+}
+
+pub struct HandlerRouterBuilder<S = ()> {
+    routes: HashMap<String, RouteHandler<S>>,
+}
+
+impl<S> HandlerRouterBuilder<S> {
+    pub fn new() -> Self {
+        Self {
+            routes: HashMap::new(),
+        }
+    }
+
+    pub fn add<const ASYNC: bool, M: Send + 'static>(
+        &mut self,
+        route: &str,
+        handler: impl Handler<ASYNC, M, S> + 'static,
+    ) where
+        S: Clone + Send + 'static,
+    {
+        let erased = handler.erased();
+        let without_state = RouteHandler::WithoutState(erased.clone_boxed());
+        self.routes.insert(route.to_string(), without_state);
+    }
+
+    pub fn with_state<S2>(self, state: S) -> HandlerRouterBuilder<S2>
+    where
+        S: Clone + Send + 'static,
+        S2: Clone + Send + 'static,
+    {
+        let mut routes = HashMap::<String, RouteHandler<S2>>::new();
+
+        for (key, route) in self.routes {
+            let route: RouteHandler<S2> = match route {
+                RouteHandler::WithoutState(handler) => {
+                    RouteHandler::WithState(BoxCloneService::new(handler.with_state(state.clone())))
+                }
+                RouteHandler::WithState(service) => RouteHandler::WithState(service),
+            };
+            routes.insert(key, route);
+        }
+
+        HandlerRouterBuilder::<S2> { routes }
+    }
+}
+
+impl HandlerRouterBuilder<()> {
+    pub fn build(self) -> HandlerRouter {
+        let mut router = matchit::Router::new();
+
+        for (key, route) in self.routes {
+            let route = match route {
+                RouteHandler::WithoutState(handler) => BoxCloneService::new(handler.with_state(())),
+                RouteHandler::WithState(service) => service,
+            };
+            router.insert(key, route).unwrap();
+        }
+
+        HandlerRouter { inner: router }
+    }
+}
 
 pub struct HandlerRouter {
     inner: matchit::Router<BoxCloneService<Publish, (), Infallible>>,
 }
 
 impl HandlerRouter {
-    pub fn new() -> Self {
-        Self {
-            inner: matchit::Router::new(),
-        }
-    }
-
-    pub fn add<const ASYNC: bool, M: Send + 'static, S: Clone + Send + 'static>(
-        &mut self,
-        route: String,
-        handler: impl Handler<ASYNC, M, S>,
-        state: S,
-    ) {
-        let handler = handler.with_state(state);
-        let handler = BoxCloneService::new(handler);
-        self.inner.insert(route, handler).unwrap();
-    }
-
     pub async fn handle(&mut self, publish: Publish) {
         if let Ok(router_match) = self.inner.at_mut(&publish.topic) {
-            let service = router_match
-                .value
-                .ready()
-                .await
-                .expect("Error type is Infallible.");
+            let service = router_match.value;
+            service.ready().await.expect("Error type is Infallible.");
             service
                 .call(publish.clone())
                 .await
@@ -44,7 +100,7 @@ impl HandlerRouter {
     }
 }
 
-impl Default for HandlerRouter {
+impl<S> Default for HandlerRouterBuilder<S> {
     fn default() -> Self {
         Self::new()
     }

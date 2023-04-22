@@ -20,7 +20,7 @@ use crate::{
         subscribe::SubscribeHandler,
     },
     router::Router,
-    HandlerRouter,
+    subscribe::router::HandlerRouter,
 };
 
 #[derive(Clone)]

@@ -1,7 +1,7 @@
 use std::convert::Infallible;
 
 use mqttbytes::{v5::Publish, QoS};
-use qute::{Client, FromPublish, HandlerRouter, State, Topic};
+use qute::{Client, FromPublish, HandlerRouterBuilder, State, Topic};
 use tokio::task::yield_now;
 use tracing_subscriber::util::SubscriberInitExt;
 
@@ -16,18 +16,16 @@ async fn run() {
         .finish()
         .init();
 
-    let mut router = HandlerRouter::new();
+    let mut router = HandlerRouterBuilder::<String>::new();
 
-    router.add(
-        String::from("test"),
-        |_publish: Publish, State(state): State<&str>| {
-            tracing::warn!("Test handler!");
-            tracing::warn!(?state, "Now with state!");
-        },
-        "This is the state.",
-    );
+    router.add("test", |_publish: Publish, State(state): State<String>| {
+        tracing::warn!("Test handler!");
+        tracing::warn!(?state, "Now with state!");
+    });
+    let mut router = router.with_state(String::from("This is the state."));
 
-    router.add(String::from("foo/bar"), foobar, ());
+    router.add("foo/bar", foobar);
+    let router = router.build();
 
     let client = Client::connect(router).await;
     client.subscribe("test").await.await;

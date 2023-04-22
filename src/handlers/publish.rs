@@ -11,7 +11,7 @@ use mqttbytes::{
 };
 use tokio::sync::Notify;
 
-use crate::HandlerRouter;
+use crate::subscribe::router::HandlerRouter;
 
 pub(crate) struct SentPublishHandler {
     next_id: u16,
