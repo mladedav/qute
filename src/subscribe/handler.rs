@@ -11,15 +11,12 @@ use tower::Service;
 
 use super::extractor::FromPublish;
 
-// use super::serivce::MqttService;
-
 pub trait Handler<const ASYNC: bool, M, S = ()>: Clone + Send + Sized + 'static
 where
     S: Clone + Send,
 {
     type Future: Future<Output = ()> + Send + 'static;
 
-    // Required method
     fn call(self, req: Publish, state: S) -> Self::Future;
 
     // Provided methods
@@ -42,79 +39,74 @@ where
     }
 }
 
-impl<F, S: Clone + Send> Handler<false, (), S> for F
-where
-    F: FnOnce() + Clone + Send + 'static,
-{
-    type Future = Ready<()>;
+macro_rules! all_tuples {
+    ($macro:ident) => {
+        $macro!();
+        $macro!(T1);
+        $macro!(T1, T2);
+        $macro!(T1, T2, T3);
+        $macro!(T1, T2, T3, T4);
+        $macro!(T1, T2, T3, T4, T5);
+        $macro!(T1, T2, T3, T4, T5, T6);
+        $macro!(T1, T2, T3, T4, T5, T6, T7);
+        $macro!(T1, T2, T3, T4, T5, T6, T7, T8);
+    };
+}
 
-    fn call(self, _publish: Publish, _state: S) -> Self::Future {
-        self();
-        ready(())
+macro_rules! impl_handler {
+    (
+        $($ty:ident),*
+    ) => {
+        impl<F, $($ty,)* S> Handler<false, ($($ty,)*), S> for F
+        where
+            S: Clone + Send,
+            F: FnOnce($($ty,)*) + Clone + Send + 'static,
+            $( $ty: FromPublish<S>, )*
+        {
+            type Future = Ready<()>;
+
+            #[allow(non_snake_case)]
+            #[allow(unused_variables)]
+            fn call(self, publish: Publish, state: S) -> Self::Future {
+                $(
+                    let $ty = $ty::from_publish(&publish, &state).unwrap();
+                )*
+                self($($ty, )*);
+                ready(())
+            }
+        }
     }
 }
 
-impl<F, T1, S: Clone + Send> Handler<false, (T1,), S> for F
-where
-    F: FnOnce(T1) + Clone + Send + 'static,
-    T1: FromPublish<S>,
-{
-    type Future = Ready<()>;
+macro_rules! impl_async_handler {
+    (
+        $($ty:ident),*
+    ) => {
+        impl<F, $($ty,)* Fut, S> Handler<true, ($($ty,)*), S> for F
+        where
+            S: Clone + Send,
+            F: FnOnce($($ty,)*) -> Fut + Clone + Send + 'static,
+            Fut: Future<Output = ()> + Send,
+            $( $ty: FromPublish<S> + Send + 'static, )*
+        {
+            type Future = Pin<Box<dyn Future<Output = ()> + Send>>;
 
-    fn call(self, publish: Publish, state: S) -> Self::Future {
-        let t1 = T1::from_publish(&publish, &state).unwrap();
-        self(t1);
-        ready(())
+            #[allow(non_snake_case)]
+            #[allow(unused_variables)]
+            fn call(self, publish: Publish, state: S) -> Self::Future {
+                $(
+                    let $ty = $ty::from_publish(&publish, &state).unwrap();
+                )*
+                Box::pin(async move {
+                    self($($ty, )*).await;
+                })
+            }
+        }
     }
 }
 
-impl<F, T1, T2, S: Clone + Send> Handler<false, (T1, T2), S> for F
-where
-    F: FnOnce(T1, T2) + Clone + Send + 'static,
-    T1: FromPublish<S>,
-    T2: FromPublish<S>,
-{
-    type Future = Ready<()>;
-
-    fn call(self, publish: Publish, state: S) -> Self::Future {
-        let t1 = T1::from_publish(&publish, &state).unwrap();
-        let t2 = T2::from_publish(&publish, &state).unwrap();
-        self(t1, t2);
-        ready(())
-    }
-}
-
-impl<F, T1, T2, T3, S: Clone + Send> Handler<false, (T1, T2, T3), S> for F
-where
-    F: FnOnce(T1, T2, T3) + Clone + Send + 'static,
-    T1: FromPublish<S>,
-    T2: FromPublish<S>,
-    T3: FromPublish<S>,
-{
-    type Future = Ready<()>;
-
-    fn call(self, publish: Publish, state: S) -> Self::Future {
-        let t1 = T1::from_publish(&publish, &state).unwrap();
-        let t2 = T2::from_publish(&publish, &state).unwrap();
-        let t3 = T3::from_publish(&publish, &state).unwrap();
-        self(t1, t2, t3);
-        ready(())
-    }
-}
-
-impl<F, Fut, S: Clone + Send> Handler<true, (), S> for F
-where
-    F: FnOnce(Publish) -> Fut + Clone + Send + 'static,
-    Fut: Future<Output = ()> + Send,
-{
-    type Future = Pin<Box<dyn Future<Output = ()> + Send>>;
-
-    fn call(self, publish: Publish, _state: S) -> Self::Future {
-        Box::pin(async move {
-            self(publish).await;
-        })
-    }
-}
+all_tuples!(impl_handler);
+all_tuples!(impl_async_handler);
 
 pub struct HandlerService<const ASYNC: bool, H, M, S> {
     handler: H,
@@ -146,15 +138,14 @@ impl<const ASYNC: bool, H, M, S> HandlerService<ASYNC, H, M, S> {
     }
 }
 
-impl<const A: bool, H, M, S> Service<Publish> for HandlerService<A, H, M, S>
+impl<const ASYNC: bool, H, M, S> Service<Publish> for HandlerService<ASYNC, H, M, S>
 where
-    H: Handler<A, M, S> + Clone + Send + 'static,
+    H: Handler<ASYNC, M, S> + Clone + Send + 'static,
     S: Clone + Send + 'static,
 {
     type Response = ();
     type Error = Infallible;
     type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
-    // type Future = TempFut;
 
     fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         Poll::Ready(Ok(()))

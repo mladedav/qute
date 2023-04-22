@@ -51,7 +51,7 @@ async fn run() {
     tokio::time::sleep(std::time::Duration::from_secs(1)).await;
 }
 
-async fn foobar(_publish: Publish) {
+async fn foobar(_p1: Publish, _p2: Publish, _p3: Publish, _p4: Publish, _p5: Publish, _p6: Publish, _p7: Publish) {
     yield_now().await;
-    tracing::warn!("Async FOOBAR handler!");
+    tracing::warn!("Async FOOBAR handler with quite a few extractors!");
 }
