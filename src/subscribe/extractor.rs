@@ -22,11 +22,21 @@ impl<S> FromPublish<S> for Publish {
 
 pub struct State<S>(pub S);
 
-impl<S: Clone> FromPublish<S> for State<S> {
+pub trait FromState<S> {
+    fn from_state(state: &S) -> Self;
+}
+
+impl<S: Clone> FromState<S> for S {
+    fn from_state(state: &S) -> Self {
+        state.clone()
+    }
+}
+
+impl<S, T: FromState<S>> FromPublish<S> for State<T> {
     type Rejection = Infallible;
 
     fn from_publish(_publish: &Publish, state: &S) -> Result<Self, Self::Rejection> {
-        Ok(State(state.clone()))
+        Ok(State(T::from_state(state)))
     }
 }
 

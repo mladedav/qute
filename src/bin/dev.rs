@@ -1,7 +1,7 @@
 use std::convert::Infallible;
 
 use mqttbytes::{v5::Publish, QoS};
-use qute::{Client, FromPublish, HandlerRouterBuilder, State, Topic};
+use qute::{Client, FromPublish, FromState, HandlerRouterBuilder, State, Topic};
 use tokio::task::yield_now;
 use tracing_subscriber::util::SubscriberInitExt;
 
@@ -25,7 +25,7 @@ async fn run() {
     let mut router = router.with_state(String::from("This is the state."));
 
     router.add("foo/bar", foobar);
-    let router = router.build();
+    let router = router.with_state(OuterState(InnerState)).build();
 
     let client = Client::connect(router).await;
     client.subscribe("test").await.await;
@@ -51,20 +51,32 @@ async fn run() {
     tokio::time::sleep(std::time::Duration::from_secs(1)).await;
 }
 
+#[derive(Clone, Debug)]
+struct InnerState;
+#[derive(Clone, Debug)]
+struct OuterState(InnerState);
+
+impl FromState<OuterState> for InnerState {
+    fn from_state(state: &OuterState) -> Self {
+        state.0.clone()
+    }
+}
+
 async fn foobar(
     _publish: Publish,
     qos: QoS,
     Topic(topic): Topic,
     custom: Custom,
-    _p5: Publish,
-    _p6: Publish,
-    _p7: Publish,
+    State(outer): State<OuterState>,
+    State(inner): State<InnerState>,
 ) {
     yield_now().await;
     tracing::warn!(
         ?qos,
         ?topic,
         ?custom,
+        ?outer,
+        ?inner,
         "Async FOOBAR handler with quite a few extractors!"
     );
 }
