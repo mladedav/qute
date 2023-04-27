@@ -38,7 +38,10 @@ pub trait FromPublish: Sized {
     fn from_publish(publish: &Publish) -> Result<Self, Self::Rejection>;
 }
 
-impl<S, T> Extractable<S> for T where T: FromPublish {
+impl<S, T> Extractable<S> for T
+where
+    T: FromPublish,
+{
     type Rejection = T::Rejection;
 
     fn extract(publish: &Publish, _state: &S) -> Result<Self, Self::Rejection> {

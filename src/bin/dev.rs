@@ -28,25 +28,17 @@ async fn run() {
     let router = router.with_state(OuterState(InnerState)).build();
 
     let client = Client::connect(router).await;
-    client.subscribe("test").await.await;
-    client.subscribe("foo/bar").await.await;
-    client
-        .publish("test", QoS::AtMostOnce, b"hello")
-        .await
-        .await;
+    client.subscribe("test").await;
+    client.subscribe("foo/bar").await;
+    client.publish("test", QoS::AtMostOnce, b"hello").await;
     client
         .publish("test", QoS::AtLeastOnce, b"hello world")
-        .await
         .await;
     client
         .publish("test", QoS::ExactlyOnce, b"hello complicated world")
-        .await
         .await;
-    client
-        .publish("foo/bar", QoS::AtMostOnce, b"hello")
-        .await
-        .await;
-    client.publish("foo", QoS::AtMostOnce, b"hello").await.await;
+    client.publish("foo/bar", QoS::AtMostOnce, b"hello").await;
+    client.publish("foo", QoS::AtMostOnce, b"hello").await;
 
     tokio::time::sleep(std::time::Duration::from_secs(1)).await;
 }

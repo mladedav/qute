@@ -1,4 +1,4 @@
-use std::{future::Future, pin::Pin, sync::Arc};
+use std::sync::Arc;
 
 use mqttbytes::{
     v5::{Connect, Packet, Publish, Subscribe},
@@ -55,27 +55,26 @@ impl Client {
         });
 
         let connect = Packet::Connect(Connect::new("qute"));
-        // Split so we do not hold the lock
-        let task = router.lock().await.route_sent(connect).await;
-        task.await;
+        let future = router.lock().await.route_sent(connect);
+        // Do now hold the lock while waiting
+        future.await;
 
         Self { router }
     }
 
-    pub async fn publish(
-        &self,
-        topic: &str,
-        qos: QoS,
-        payload: &[u8],
-    ) -> Pin<Box<dyn Future<Output = ()>>> {
+    pub async fn publish(&self, topic: &str, qos: QoS, payload: &[u8]) {
         let packet = Packet::Publish(Publish::new(topic, qos, payload));
 
-        self.router.lock().await.route_sent(packet).await
+        let future = self.router.lock().await.route_sent(packet);
+        // Do now hold the lock while waiting
+        future.await;
     }
 
-    pub async fn subscribe(&self, topic: &str) -> Pin<Box<dyn Future<Output = ()>>> {
+    pub async fn subscribe(&self, topic: &str) {
         let packet = Packet::Subscribe(Subscribe::new(topic, QoS::ExactlyOnce));
 
-        self.router.lock().await.route_sent(packet).await
+        let future = self.router.lock().await.route_sent(packet);
+        // Do now hold the lock while waiting
+        future.await;
     }
 }
