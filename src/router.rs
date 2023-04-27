@@ -51,7 +51,6 @@ where
         };
 
         for response in responses {
-            self.connection.send(&response).await.unwrap();
             self.route_sent(response).await;
         }
     }
