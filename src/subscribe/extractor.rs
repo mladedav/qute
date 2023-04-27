@@ -6,18 +6,10 @@ use mqttbytes::v5::Publish;
 use mqttbytes::QoS;
 use serde::Deserialize;
 
-pub trait FromPublish<S>: Sized {
+pub trait Extractable<S>: Sized {
     type Rejection: Debug;
 
-    fn from_publish(publish: &Publish, state: &S) -> Result<Self, Self::Rejection>;
-}
-
-impl<S> FromPublish<S> for Publish {
-    type Rejection = Infallible;
-
-    fn from_publish(publish: &Publish, _state: &S) -> Result<Self, Self::Rejection> {
-        Ok(publish.clone())
-    }
+    fn extract(publish: &Publish, state: &S) -> Result<Self, Self::Rejection>;
 }
 
 pub struct State<S>(pub S);
@@ -32,49 +24,71 @@ impl<S: Clone> FromState<S> for S {
     }
 }
 
-impl<S, T: FromState<S>> FromPublish<S> for State<T> {
+impl<S, T: FromState<S>> Extractable<S> for State<T> {
     type Rejection = Infallible;
 
-    fn from_publish(_publish: &Publish, state: &S) -> Result<Self, Self::Rejection> {
+    fn extract(_publish: &Publish, state: &S) -> Result<Self, Self::Rejection> {
         Ok(State(T::from_state(state)))
+    }
+}
+
+pub trait FromPublish: Sized {
+    type Rejection: Debug;
+
+    fn from_publish(publish: &Publish) -> Result<Self, Self::Rejection>;
+}
+
+impl<S, T> Extractable<S> for T where T: FromPublish {
+    type Rejection = T::Rejection;
+
+    fn extract(publish: &Publish, _state: &S) -> Result<Self, Self::Rejection> {
+        T::from_publish(publish)
+    }
+}
+
+impl FromPublish for Publish {
+    type Rejection = Infallible;
+
+    fn from_publish(publish: &Publish) -> Result<Self, Self::Rejection> {
+        Ok(publish.clone())
     }
 }
 
 pub struct Topic(pub String);
 
-impl<S> FromPublish<S> for Topic {
+impl FromPublish for Topic {
     type Rejection = Infallible;
 
-    fn from_publish(publish: &Publish, _state: &S) -> Result<Self, Self::Rejection> {
+    fn from_publish(publish: &Publish) -> Result<Self, Self::Rejection> {
         Ok(Topic(publish.topic.clone()))
     }
 }
 
-impl<S> FromPublish<S> for QoS {
+impl FromPublish for QoS {
     type Rejection = Infallible;
 
-    fn from_publish(publish: &Publish, _state: &S) -> Result<Self, Self::Rejection> {
+    fn from_publish(publish: &Publish) -> Result<Self, Self::Rejection> {
         Ok(publish.qos)
     }
 }
 
-impl<S> FromPublish<S> for Bytes {
+impl FromPublish for Bytes {
     type Rejection = Infallible;
 
-    fn from_publish(publish: &Publish, _state: &S) -> Result<Self, Self::Rejection> {
+    fn from_publish(publish: &Publish) -> Result<Self, Self::Rejection> {
         Ok(publish.payload.clone())
     }
 }
 
 pub struct Json<T>(pub T);
 
-impl<T, S> FromPublish<S> for Json<T>
+impl<T> FromPublish for Json<T>
 where
     T: for<'de> Deserialize<'de>,
 {
     type Rejection = serde_json::Error;
 
-    fn from_publish(publish: &Publish, _state: &S) -> Result<Self, Self::Rejection> {
+    fn from_publish(publish: &Publish) -> Result<Self, Self::Rejection> {
         serde_json::from_slice(&publish.payload).map(Json)
     }
 }

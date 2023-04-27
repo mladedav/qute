@@ -1,7 +1,7 @@
 use std::convert::Infallible;
 
 use mqttbytes::{v5::Publish, QoS};
-use qute::{Client, FromPublish, FromState, HandlerRouterBuilder, State, Topic};
+use qute::{Client, Extractable, FromState, HandlerRouterBuilder, State, Topic};
 use tokio::task::yield_now;
 use tracing_subscriber::util::SubscriberInitExt;
 
@@ -84,10 +84,10 @@ async fn foobar(
 #[derive(Debug)]
 struct Custom(String);
 
-impl<S> FromPublish<S> for Custom {
+impl<S> Extractable<S> for Custom {
     type Rejection = Infallible;
 
-    fn from_publish(_publish: &Publish, _state: &S) -> Result<Self, Self::Rejection> {
+    fn extract(_publish: &Publish, _state: &S) -> Result<Self, Self::Rejection> {
         Ok(Custom(String::from("My implementation of FromPublish.")))
     }
 }

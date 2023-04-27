@@ -9,7 +9,7 @@ use std::{
 use mqttbytes::v5::Publish;
 use tower::Service;
 
-use super::extractor::FromPublish;
+use super::extractor::Extractable;
 
 pub trait Handler<const ASYNC: bool, M, S = ()>: Clone + Send + Sized + 'static
 where
@@ -51,7 +51,7 @@ macro_rules! impl_handler {
         where
             S: Clone + Send + 'static,
             F: FnOnce($($ty,)*) + Clone + Send + 'static,
-            $( $ty: FromPublish<S> + 'static, )*
+            $( $ty: Extractable<S> + 'static, )*
         {
             type Future = Ready<()>;
 
@@ -59,7 +59,7 @@ macro_rules! impl_handler {
             #[allow(unused_variables)]
             fn call(self, publish: Publish, state: S) -> Self::Future {
                 $(
-                    let $ty = $ty::from_publish(&publish, &state).unwrap();
+                    let $ty = $ty::extract(&publish, &state).unwrap();
                 )*
                 self($($ty, )*);
                 ready(())
@@ -77,7 +77,7 @@ macro_rules! impl_async_handler {
             S: Clone + Send + 'static,
             F: FnOnce($($ty,)*) -> Fut + Clone + Send + 'static,
             Fut: Future<Output = ()> + Send,
-            $( $ty: FromPublish<S> + Send + 'static, )*
+            $( $ty: Extractable<S> + Send + 'static, )*
         {
             type Future = Pin<Box<dyn Future<Output = ()> + Send>>;
 
@@ -85,7 +85,7 @@ macro_rules! impl_async_handler {
             #[allow(unused_variables)]
             fn call(self, publish: Publish, state: S) -> Self::Future {
                 $(
-                    let $ty = $ty::from_publish(&publish, &state).unwrap();
+                    let $ty = $ty::extract(&publish, &state).unwrap();
                 )*
                 Box::pin(async move {
                     self($($ty, )*).await;
