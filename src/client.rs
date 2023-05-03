@@ -25,7 +25,7 @@ use crate::{
 
 #[derive(Clone)]
 pub struct Client {
-    router: Arc<Mutex<Router<OwnedReadHalf, OwnedWriteHalf>>>,
+    router: Router<OwnedReadHalf, OwnedWriteHalf>,
 }
 
 impl Client {
@@ -35,29 +35,24 @@ impl Client {
 
         let router = Router {
             connection: connection.clone(),
-            connect: ConnectHandler::new(),
-            sent_publish: SentPublishHandler::new(),
-            received_publish: ReceivedPublishHandler::new(publish_router),
-            subscribe: SubscribeHandler::new(),
+            connect: Arc::new(Mutex::new(ConnectHandler::new())),
+            sent_publish: Arc::new(Mutex::new(SentPublishHandler::new())),
+            received_publish: Arc::new(Mutex::new(ReceivedPublishHandler::new(publish_router))),
+            subscribe: Arc::new(Mutex::new(SubscribeHandler::new())),
         };
 
-        let router = Arc::new(Mutex::new(router));
-
         tokio::spawn({
-            let connection = connection.clone();
             let router = router.clone();
             async move {
                 while let Some(packet) = connection.recv().await.unwrap() {
-                    router.lock().await.route_received(packet).await;
+                    router.route_received(packet).await;
                 }
                 tracing::warn!("Connection closed.");
             }
         });
 
         let connect = Packet::Connect(Connect::new("qute"));
-        let future = router.lock().await.route_sent(connect);
-        // Do now hold the lock while waiting
-        future.await;
+        router.route_sent(connect).await;
 
         Self { router }
     }
@@ -65,16 +60,12 @@ impl Client {
     pub async fn publish(&self, topic: &str, qos: QoS, payload: &[u8]) {
         let packet = Packet::Publish(Publish::new(topic, qos, payload));
 
-        let future = self.router.lock().await.route_sent(packet);
-        // Do now hold the lock while waiting
-        future.await;
+        self.router.route_sent(packet).await;
     }
 
     pub async fn subscribe(&self, topic: &str) {
         let packet = Packet::Subscribe(Subscribe::new(topic, QoS::ExactlyOnce));
 
-        let future = self.router.lock().await.route_sent(packet);
-        // Do now hold the lock while waiting
-        future.await;
+        self.router.route_sent(packet).await;
     }
 }
