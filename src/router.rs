@@ -1,8 +1,12 @@
-use std::{future::Future, pin::Pin, sync::Arc};
+use std::{convert::Infallible, future::Future, pin::Pin, sync::Arc};
 
-use mqttbytes::v5::Packet;
+use mqttbytes::{
+    v5::{Packet, Publish},
+    QoS,
+};
 use tokio::{
     io::{AsyncRead, AsyncWrite},
+    net::tcp::{OwnedReadHalf, OwnedWriteHalf},
     sync::Mutex,
 };
 
@@ -13,6 +17,7 @@ use crate::{
         publish::{ReceivedPublishHandler, SentPublishHandler},
         subscribe::SubscribeHandler,
     },
+    ClientState, Extractable, HandlerRouter,
 };
 
 pub(crate) struct Router<R, W> {
@@ -103,6 +108,72 @@ where
             Packet::Unsubscribe(packet) => self.subscribe.lock().await.unsubscribe(packet),
             Packet::UnsubAck(_) => unreachable!("Client cannot send unsubscribe acknowledgement."),
         }
+    }
+}
+
+impl Router<OwnedReadHalf, OwnedWriteHalf> {
+    pub(crate) fn new(
+        connection: Arc<Connection<OwnedReadHalf, OwnedWriteHalf>>,
+        router: HandlerRouter,
+    ) -> Self {
+        let sent_publish = Arc::new(Mutex::new(SentPublishHandler::new()));
+
+        let publisher = Publisher::new(connection.clone(), sent_publish.clone());
+
+        let client_state = ClientState { publisher };
+
+        let router = router.build(client_state);
+
+        let connect = Arc::new(Mutex::new(ConnectHandler::new()));
+        let received_publish = Arc::new(Mutex::new(ReceivedPublishHandler::new(router)));
+        let subscribe = Arc::new(Mutex::new(SubscribeHandler::new()));
+
+        Self {
+            connection,
+            connect,
+            sent_publish,
+            received_publish,
+            subscribe,
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct Publisher {
+    connection: Arc<Connection<OwnedReadHalf, OwnedWriteHalf>>,
+    sent_publish: Arc<Mutex<SentPublishHandler>>,
+}
+
+impl Publisher {
+    fn new(
+        connection: Arc<Connection<OwnedReadHalf, OwnedWriteHalf>>,
+        sent_publish: Arc<Mutex<SentPublishHandler>>,
+    ) -> Self {
+        Self {
+            connection,
+            sent_publish,
+        }
+    }
+
+    pub async fn publish(&self, topic: &str, qos: QoS, payload: &[u8]) {
+        let mut publish = Publish::new(topic, qos, payload);
+
+        let future = self.sent_publish.lock().await.publish(&mut publish);
+        let packet = Packet::Publish(publish);
+        self.connection.send(&packet).unwrap().await;
+        future.await;
+    }
+}
+
+impl<S> Extractable<S> for Publisher {
+    type Rejection = Infallible;
+
+    fn extract(
+        _publish: &Publish,
+        _state: &S,
+        client_state: &ClientState,
+    ) -> Result<Self, Self::Rejection> {
+        Ok(client_state.publisher.clone())
     }
 }
 

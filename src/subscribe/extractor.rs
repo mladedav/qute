@@ -6,10 +6,16 @@ use mqttbytes::v5::Publish;
 use mqttbytes::QoS;
 use serde::Deserialize;
 
+use crate::client::ClientState;
+
 pub trait Extractable<S>: Sized {
     type Rejection: Debug;
 
-    fn extract(publish: &Publish, state: &S) -> Result<Self, Self::Rejection>;
+    fn extract(
+        publish: &Publish,
+        state: &S,
+        client_state: &ClientState,
+    ) -> Result<Self, Self::Rejection>;
 }
 
 pub struct State<S>(pub S);
@@ -27,7 +33,11 @@ impl<S: Clone> FromState<S> for S {
 impl<S, T: FromState<S>> Extractable<S> for State<T> {
     type Rejection = Infallible;
 
-    fn extract(_publish: &Publish, state: &S) -> Result<Self, Self::Rejection> {
+    fn extract(
+        _publish: &Publish,
+        state: &S,
+        _client_state: &ClientState,
+    ) -> Result<Self, Self::Rejection> {
         Ok(State(T::from_state(state)))
     }
 }
@@ -44,7 +54,11 @@ where
 {
     type Rejection = T::Rejection;
 
-    fn extract(publish: &Publish, _state: &S) -> Result<Self, Self::Rejection> {
+    fn extract(
+        publish: &Publish,
+        _state: &S,
+        _client_state: &ClientState,
+    ) -> Result<Self, Self::Rejection> {
         T::from_publish(publish)
     }
 }

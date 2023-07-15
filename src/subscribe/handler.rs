@@ -7,7 +7,9 @@ use std::{
 };
 
 use mqttbytes::v5::Publish;
-use tower::Service;
+use tower::{util::BoxCloneService, Service};
+
+use crate::client::ClientState;
 
 use super::extractor::Extractable;
 
@@ -18,7 +20,7 @@ where
 {
     type Future: Future<Output = ()> + Send + 'static;
 
-    fn call(self, req: Publish, state: S) -> Self::Future;
+    fn call(self, req: Publish, state: S, client_state: ClientState) -> Self::Future;
 
     fn erased(self) -> Box<dyn ErasedHandler<S>> {
         let wrapper = HandlerWrapper::<ASYNC, Self, M, S> {
@@ -57,9 +59,9 @@ macro_rules! impl_handler {
 
             #[allow(non_snake_case)]
             #[allow(unused_variables)]
-            fn call(self, publish: Publish, state: S) -> Self::Future {
+            fn call(self, publish: Publish, state: S, client_state: ClientState) -> Self::Future {
                 $(
-                    let $ty = $ty::extract(&publish, &state).unwrap();
+                    let $ty = $ty::extract(&publish, &state, &client_state).unwrap();
                 )*
                 self($($ty, )*);
                 ready(())
@@ -83,9 +85,9 @@ macro_rules! impl_async_handler {
 
             #[allow(non_snake_case)]
             #[allow(unused_variables)]
-            fn call(self, publish: Publish, state: S) -> Self::Future {
+            fn call(self, publish: Publish, state: S, client_state: ClientState) -> Self::Future {
                 $(
-                    let $ty = $ty::extract(&publish, &state).unwrap();
+                    let $ty = $ty::extract(&publish, &state, &client_state).unwrap();
                 )*
                 Box::pin(async move {
                     self($($ty, )*).await;
@@ -121,8 +123,13 @@ pub trait CloneErasedHandler<S> {
 }
 
 pub trait ErasedHandler<S>: CloneErasedHandler<S> + Send {
-    fn call(&mut self, req: Publish, state: S) -> Pin<Box<dyn Future<Output = ()> + Send>>;
-    fn with_state(&self, state: S) -> HandlerService<S>;
+    fn call(
+        &mut self,
+        req: Publish,
+        state: S,
+        client_state: ClientState,
+    ) -> Pin<Box<dyn Future<Output = ()> + Send>>;
+    fn with_state(&self, state: S) -> ClientlessHandlerService<S>;
 }
 
 impl<const ASYNC: bool, H, M, S> CloneErasedHandler<S> for HandlerWrapper<ASYNC, H, M, S>
@@ -142,21 +149,81 @@ where
     S: Clone + Send + 'static,
     M: 'static,
 {
-    fn call(&mut self, req: Publish, state: S) -> Pin<Box<dyn Future<Output = ()> + Send>> {
-        Box::pin(self.handler.clone().call(req, state))
+    fn call(
+        &mut self,
+        req: Publish,
+        state: S,
+        client_state: ClientState,
+    ) -> Pin<Box<dyn Future<Output = ()> + Send>> {
+        Box::pin(self.handler.clone().call(req, state, client_state))
     }
 
-    fn with_state(&self, state: S) -> HandlerService<S> {
-        HandlerService {
+    fn with_state(&self, state: S) -> ClientlessHandlerService<S> {
+        ClientlessHandlerService {
             handler: self.clone_boxed(),
             state,
         }
     }
 }
 
+pub struct ClientlessHandlerService<S> {
+    handler: Box<dyn ErasedHandler<S>>,
+    state: S,
+}
+
+impl<S> Clone for ClientlessHandlerService<S>
+where
+    S: Clone,
+{
+    fn clone(&self) -> Self {
+        Self {
+            handler: self.handler.clone_boxed(),
+            state: self.state.clone(),
+        }
+    }
+}
+
+pub trait CloneClientlessHandlerService {
+    fn clone_boxed(&self) -> Box<dyn ErasedClientlessHandlerService>;
+}
+
+pub trait ErasedClientlessHandlerService: CloneClientlessHandlerService {
+    fn get_service(&self, client_state: ClientState) -> BoxCloneService<Publish, (), Infallible>;
+}
+
+impl<S: Clone + Send + 'static> CloneClientlessHandlerService for ClientlessHandlerService<S> {
+    fn clone_boxed(&self) -> Box<dyn ErasedClientlessHandlerService> {
+        Box::new(Self {
+            handler: self.handler.clone_boxed(),
+            state: self.state.clone(),
+        })
+    }
+}
+
+impl<S: Clone + Send + 'static> ErasedClientlessHandlerService for ClientlessHandlerService<S> {
+    fn get_service(&self, client_state: ClientState) -> BoxCloneService<Publish, (), Infallible> {
+        BoxCloneService::new(HandlerService::new(
+            self.handler.clone_boxed(),
+            self.state.clone(),
+            client_state,
+        ))
+    }
+}
+
 pub struct HandlerService<S> {
     handler: Box<dyn ErasedHandler<S>>,
     state: S,
+    client_state: ClientState,
+}
+
+impl<S> HandlerService<S> {
+    fn new(handler: Box<dyn ErasedHandler<S>>, state: S, client_state: ClientState) -> Self {
+        Self {
+            handler,
+            state,
+            client_state,
+        }
+    }
 }
 
 impl<S> Clone for HandlerService<S>
@@ -167,6 +234,7 @@ where
         Self {
             handler: self.handler.clone_boxed(),
             state: self.state.clone(),
+            client_state: self.client_state.clone(),
         }
     }
 }
@@ -183,8 +251,9 @@ impl<S: Clone + Send + 'static> Service<Publish> for HandlerService<S> {
     fn call(&mut self, req: Publish) -> Self::Future {
         let mut handler = self.handler.clone_boxed();
         let state = self.state.clone();
+        let client_state = self.client_state.clone();
         Box::pin(async move {
-            handler.call(req, state).await;
+            handler.call(req, state, client_state).await;
             Ok(())
         })
     }

@@ -1,7 +1,9 @@
 use std::convert::Infallible;
 
 use mqttbytes::{v5::Publish, QoS};
-use qute::{Client, Extractable, FromState, HandlerRouterBuilder, State, Topic};
+use qute::{
+    Client, ClientState, Extractable, FromState, HandlerRouterBuilder, Publisher, State, Topic,
+};
 use tokio::task::yield_now;
 use tracing_subscriber::util::SubscriberInitExt;
 
@@ -25,7 +27,11 @@ async fn run() {
     let mut router = router.with_state(String::from("This is the state."));
 
     router.add("foo/bar", foobar);
-    let router = router.with_state(OuterState(InnerState)).build();
+    let mut router = router.with_state(OuterState(InnerState));
+    router.add("callback", |publish: Publish| {
+        tracing::warn!(?publish, "Callback handler!");
+    });
+    let router = router.build();
 
     let client = Client::connect(router).await;
     client.subscribe("test").await;
@@ -61,6 +67,7 @@ async fn foobar(
     custom: Custom,
     State(outer): State<OuterState>,
     State(inner): State<InnerState>,
+    publisher: Publisher,
 ) {
     yield_now().await;
     tracing::warn!(
@@ -71,6 +78,11 @@ async fn foobar(
         ?inner,
         "Async FOOBAR handler with quite a few extractors!"
     );
+
+    tracing::info!("Publishing stuff from handler.");
+    publisher
+        .publish("callback", QoS::AtLeastOnce, b"Go on...")
+        .await;
 }
 
 #[derive(Debug)]
@@ -79,7 +91,11 @@ struct Custom(String);
 impl<S> Extractable<S> for Custom {
     type Rejection = Infallible;
 
-    fn extract(_publish: &Publish, _state: &S) -> Result<Self, Self::Rejection> {
-        Ok(Custom(String::from("My implementation of FromPublish.")))
+    fn extract(
+        _publish: &Publish,
+        _state: &S,
+        _client: &ClientState,
+    ) -> Result<Self, Self::Rejection> {
+        Ok(Custom(String::from("My implementation of Extractable.")))
     }
 }

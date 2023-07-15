@@ -4,22 +4,14 @@ use mqttbytes::{
     v5::{Connect, Packet, Publish, Subscribe},
     QoS,
 };
-use tokio::{
-    net::{
-        tcp::{OwnedReadHalf, OwnedWriteHalf},
-        TcpStream,
-    },
-    sync::Mutex,
+use tokio::net::{
+    tcp::{OwnedReadHalf, OwnedWriteHalf},
+    TcpStream,
 };
 
 use crate::{
     connection::Connection,
-    handlers::{
-        connect::ConnectHandler,
-        publish::{ReceivedPublishHandler, SentPublishHandler},
-        subscribe::SubscribeHandler,
-    },
-    router::Router,
+    router::{Publisher, Router},
     subscribe::router::HandlerRouter,
 };
 
@@ -33,13 +25,7 @@ impl Client {
         let stream = TcpStream::connect("127.0.0.1:1883").await.unwrap();
         let connection = Arc::new(Connection::with_stream(stream));
 
-        let router = Router {
-            connection: connection.clone(),
-            connect: Arc::new(Mutex::new(ConnectHandler::new())),
-            sent_publish: Arc::new(Mutex::new(SentPublishHandler::new())),
-            received_publish: Arc::new(Mutex::new(ReceivedPublishHandler::new(publish_router))),
-            subscribe: Arc::new(Mutex::new(SubscribeHandler::new())),
-        };
+        let router = Router::new(connection.clone(), publish_router);
 
         tokio::spawn({
             let router = router.clone();
@@ -68,4 +54,9 @@ impl Client {
 
         self.router.route_sent(packet).await;
     }
+}
+
+#[derive(Clone)]
+pub struct ClientState {
+    pub(crate) publisher: Publisher,
 }

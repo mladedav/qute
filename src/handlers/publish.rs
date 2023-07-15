@@ -11,7 +11,7 @@ use mqttbytes::{
 };
 use tokio::sync::Notify;
 
-use crate::subscribe::router::HandlerRouter;
+use crate::subscribe::router::HandlerRouterWithClientState;
 
 pub(crate) struct SentPublishHandler {
     next_id: u16,
@@ -22,7 +22,7 @@ pub(crate) struct SentPublishHandler {
 
 pub(crate) struct ReceivedPublishHandler {
     pending_rel: HashMap<u16, Publish>,
-    publish_router: HandlerRouter,
+    publish_router: HandlerRouterWithClientState,
 }
 
 impl SentPublishHandler {
@@ -100,7 +100,7 @@ impl SentPublishHandler {
 }
 
 impl ReceivedPublishHandler {
-    pub fn new(publish_router: HandlerRouter) -> Self {
+    pub fn new(publish_router: HandlerRouterWithClientState) -> Self {
         Self {
             pending_rel: HashMap::new(),
             publish_router,
