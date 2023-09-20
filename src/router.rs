@@ -57,7 +57,13 @@ where
             Packet::PingReq => unreachable!("Client cannot receive ping request."),
             Packet::PingResp => self.connect.lock().await.pong(),
 
-            Packet::Publish(packet) => self.received_publish.lock().await.publish(packet).await,
+            Packet::Publish(packet) => {
+                let mut guard = self.received_publish.lock().await;
+                let publish_future = guard.publish(packet);
+                // Release the lock first
+                drop(guard);
+                publish_future.await
+            }
             Packet::PubAck(packet) => self.sent_publish.lock().await.puback(packet),
             Packet::PubRec(packet) => self.sent_publish.lock().await.pubrec(packet),
             Packet::PubRel(packet) => self.received_publish.lock().await.pubrel(packet),
@@ -69,6 +75,8 @@ where
             Packet::Unsubscribe(_) => unreachable!("Client cannot receive unsubscribe."),
             Packet::UnsubAck(packet) => self.subscribe.lock().await.unsuback(packet),
         };
+
+        tracing::debug!(?responses, "Sending responses.");
 
         for response in responses {
             self.route_sent(response).await;

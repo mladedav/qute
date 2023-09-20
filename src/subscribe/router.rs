@@ -1,7 +1,13 @@
-use std::{collections::HashMap, convert::Infallible};
+use std::{
+    collections::HashMap,
+    convert::Infallible,
+    pin::Pin,
+    task::{ready, Context, Poll},
+};
 
+use futures_core::{future::BoxFuture, Future};
 use mqttbytes::v5::Publish;
-use tower::{util::BoxCloneService, Service, ServiceExt};
+use tower::{util::BoxCloneService, Service};
 
 use crate::{ClientState, Handler};
 
@@ -99,21 +105,18 @@ impl HandlerRouter {
     }
 }
 
-pub struct HandlerRouterWithClientState {
+pub(crate) struct HandlerRouterWithClientState {
     inner: matchit::Router<BoxCloneService<Publish, (), Infallible>>,
 }
 
 impl HandlerRouterWithClientState {
-    pub async fn handle(&mut self, publish: Publish) {
+    pub(crate) fn handle(&mut self, publish: Publish) -> Option<HandlerFuture> {
         if let Ok(router_match) = self.inner.at_mut(&publish.topic) {
             let service = router_match.value;
-            service.ready().await.expect("Error type is Infallible.");
-            service
-                .call(publish.clone())
-                .await
-                .expect("Error type is Infallible.");
+            Some(HandlerFuture::new(service.clone(), publish))
         } else {
             tracing::debug!(topic = %publish.topic, "No matching route found.");
+            None
         }
     }
 }
@@ -121,5 +124,46 @@ impl HandlerRouterWithClientState {
 impl<S> Default for HandlerRouterBuilder<S> {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+pub(crate) struct HandlerFuture {
+    state: HandlerFutureState,
+    service: BoxCloneService<Publish, (), Infallible>,
+}
+
+impl HandlerFuture {
+    fn new(service: BoxCloneService<Publish, (), Infallible>, publish: Publish) -> Self {
+        Self {
+            state: HandlerFutureState::New(publish),
+            service,
+        }
+    }
+}
+
+enum HandlerFutureState {
+    New(Publish),
+    Polling(BoxFuture<'static, Result<(), Infallible>>),
+}
+
+impl Future for HandlerFuture {
+    type Output = ();
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let this = self.get_mut();
+
+        loop {
+            match &mut this.state {
+                HandlerFutureState::New(request) => {
+                    ready!(this.service.poll_ready(cx)).expect("Error type is Infallible.");
+                    let future = this.service.call(request.clone());
+                    this.state = HandlerFutureState::Polling(future);
+                }
+                HandlerFutureState::Polling(future) => {
+                    ready!(future.as_mut().poll(cx)).expect("Error type is Infallible.");
+                    return Poll::Ready(());
+                }
+            }
+        }
     }
 }

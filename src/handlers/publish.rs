@@ -3,6 +3,7 @@ use std::{
     future::{self, Future},
     pin::Pin,
     sync::Arc,
+    task::{ready, Context, Poll},
 };
 
 use mqttbytes::{
@@ -11,7 +12,7 @@ use mqttbytes::{
 };
 use tokio::sync::Notify;
 
-use crate::subscribe::router::HandlerRouterWithClientState;
+use crate::subscribe::router::{HandlerFuture, HandlerRouterWithClientState};
 
 pub(crate) struct SentPublishHandler {
     next_id: u16,
@@ -107,28 +108,25 @@ impl ReceivedPublishHandler {
         }
     }
 
-    pub async fn publish(&mut self, publish: Publish) -> Vec<Packet> {
+    pub(crate) fn publish(&mut self, publish: Publish) -> PublishFuture {
         tracing::info!(?publish, "Received publish packet.");
-        let mut reply = Vec::new();
+        let handler_future = self.publish_router.handle(publish.clone());
 
         match publish.qos {
-            QoS::AtMostOnce => self.publish_router.handle(publish.clone()).await,
-            QoS::AtLeastOnce => {
-                self.publish_router.handle(publish.clone()).await;
-                let puback = PubAck::new(publish.pkid);
-                reply.push(Packet::PubAck(puback));
-            }
+            QoS::AtMostOnce => PublishFuture::new(handler_future, Vec::new()),
+            QoS::AtLeastOnce => PublishFuture::new(
+                handler_future,
+                vec![Packet::PubAck(PubAck::new(publish.pkid))],
+            ),
             QoS::ExactlyOnce => {
+                let reply = vec![Packet::PubRec(PubRec::new(publish.pkid))];
                 if !self.pending_rel.contains_key(&publish.pkid) {
-                    self.publish_router.handle(publish.clone()).await;
+                    PublishFuture::new(None, reply)
+                } else {
+                    PublishFuture::new(handler_future, reply)
                 }
-                let pubrec = PubRec::new(publish.pkid);
-                self.pending_rel.insert(publish.pkid, publish);
-                reply.push(Packet::PubRec(pubrec));
             }
         }
-
-        reply
     }
 
     pub(crate) fn puback(&self, _puback: &mut PubAck) -> Pin<Box<dyn Future<Output = ()> + Send>> {
@@ -148,5 +146,32 @@ impl ReceivedPublishHandler {
 
     pub fn pubcomp(&mut self, _pubcomp: &mut PubComp) -> Pin<Box<dyn Future<Output = ()> + Send>> {
         Box::pin(future::ready(()))
+    }
+}
+
+pub(crate) struct PublishFuture {
+    handler_future: Option<HandlerFuture>,
+    packets: Vec<Packet>,
+}
+
+impl PublishFuture {
+    fn new(handler_future: Option<HandlerFuture>, packets: Vec<Packet>) -> Self {
+        Self {
+            handler_future,
+            packets,
+        }
+    }
+}
+
+impl Future for PublishFuture {
+    type Output = Vec<Packet>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let this = self.get_mut();
+        if let Some(handler_future) = &mut this.handler_future {
+            ready!(Pin::new(handler_future).poll(cx));
+        }
+
+        Poll::Ready(this.packets.clone())
     }
 }

@@ -31,7 +31,12 @@ impl Client {
             let router = router.clone();
             async move {
                 while let Some(packet) = connection.recv().await.unwrap() {
-                    router.route_received(packet).await;
+                    tokio::spawn({
+                        let router = router.clone();
+                        async move {
+                            router.route_received(packet).await;
+                        }
+                    });
                 }
                 tracing::warn!("Connection closed.");
             }

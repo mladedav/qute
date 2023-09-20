@@ -20,9 +20,9 @@ async fn run() {
 
     let mut router = HandlerRouterBuilder::<String>::new();
 
-    router.add("test", |_publish: Publish, State(state): State<String>| {
+    router.add("test", |publish: Publish, State(state): State<String>| {
         tracing::warn!("Test handler!");
-        tracing::warn!(?state, "Now with state!");
+        tracing::warn!(?publish, ?state, "Now with state!");
     });
     let mut router = router.with_state(String::from("This is the state."));
 
@@ -36,6 +36,8 @@ async fn run() {
     let client = Client::connect(router).await;
     client.subscribe("test").await;
     client.subscribe("foo/bar").await;
+    client.subscribe("callback").await;
+
     client.publish("test", QoS::AtMostOnce, b"hello").await;
     client
         .publish("test", QoS::AtLeastOnce, b"hello world")
@@ -81,8 +83,9 @@ async fn foobar(
 
     tracing::info!("Publishing stuff from handler.");
     publisher
-        .publish("callback", QoS::AtLeastOnce, b"Go on...")
+        .publish("callback", QoS::AtLeastOnce, b"Real callback!")
         .await;
+    tracing::info!("Stuff from handler published.");
 }
 
 #[derive(Debug)]
