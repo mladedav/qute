@@ -1,9 +1,9 @@
 use std::{
     convert::Infallible,
-    future::{ready, Future, Ready},
+    future::{self, Future, Ready},
     marker::PhantomData,
     pin::Pin,
-    task::{Context, Poll},
+    task::{self, Context, Poll},
 };
 
 use mqttbytes::v5::Publish;
@@ -20,6 +20,7 @@ where
 {
     type Future: Future<Output = ()> + Send + 'static;
 
+    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<()>;
     fn call(self, req: Publish, state: S, client_state: ClientState) -> Self::Future;
 
     fn erased(self) -> Box<dyn ErasedHandler<S>> {
@@ -57,6 +58,10 @@ macro_rules! impl_handler {
         {
             type Future = Ready<()>;
 
+            fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<()> {
+                Poll::Ready(())
+            }
+
             #[allow(non_snake_case)]
             #[allow(unused_variables)]
             fn call(self, publish: Publish, state: S, client_state: ClientState) -> Self::Future {
@@ -64,7 +69,7 @@ macro_rules! impl_handler {
                     let $ty = $ty::extract(&publish, &state, &client_state).unwrap();
                 )*
                 self($($ty, )*);
-                ready(())
+                future::ready(())
             }
         }
     }
@@ -82,6 +87,10 @@ macro_rules! impl_async_handler {
             $( $ty: Extractable<S> + Send + 'static, )*
         {
             type Future = Pin<Box<dyn Future<Output = ()> + Send>>;
+
+            fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<()> {
+                Poll::Ready(())
+            }
 
             #[allow(non_snake_case)]
             #[allow(unused_variables)]
@@ -123,6 +132,7 @@ pub trait CloneErasedHandler<S> {
 }
 
 pub trait ErasedHandler<S>: CloneErasedHandler<S> + Send {
+    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<()>;
     fn call(
         &mut self,
         req: Publish,
@@ -149,6 +159,9 @@ where
     S: Clone + Send + 'static,
     M: 'static,
 {
+    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<()> {
+        self.handler.poll_ready(cx)
+    }
     fn call(
         &mut self,
         req: Publish,
@@ -244,7 +257,8 @@ impl<S: Clone + Send + 'static> Service<Publish> for HandlerService<S> {
     type Error = Infallible;
     type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
 
-    fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        task::ready!(self.handler.poll_ready(cx));
         Poll::Ready(Ok(()))
     }
 
