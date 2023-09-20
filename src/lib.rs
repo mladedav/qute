@@ -7,6 +7,7 @@ mod subscribe;
 pub use client::Client;
 pub use client::ClientState;
 pub use router::Publisher;
+pub use router::Subscriber;
 pub use subscribe::extractor::*;
 pub use subscribe::handler::Handler;
 pub use subscribe::router::HandlerRouter;

@@ -11,7 +11,7 @@ use tokio::net::{
 
 use crate::{
     connection::Connection,
-    router::{Publisher, Router},
+    router::{Publisher, Router, Subscriber},
     subscribe::router::HandlerRouter,
 };
 
@@ -64,4 +64,5 @@ impl Client {
 #[derive(Clone)]
 pub struct ClientState {
     pub(crate) publisher: Publisher,
+    pub(crate) subscriber: Subscriber,
 }

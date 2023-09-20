@@ -1,7 +1,7 @@
 use std::{convert::Infallible, future::Future, pin::Pin, sync::Arc};
 
 use mqttbytes::{
-    v5::{Packet, Publish},
+    v5::{Packet, Publish, Subscribe},
     QoS,
 };
 use tokio::{
@@ -125,16 +125,20 @@ impl Router<OwnedReadHalf, OwnedWriteHalf> {
         router: HandlerRouter,
     ) -> Self {
         let sent_publish = Arc::new(Mutex::new(SentPublishHandler::new()));
+        let subscribe = Arc::new(Mutex::new(SubscribeHandler::new()));
 
         let publisher = Publisher::new(connection.clone(), sent_publish.clone());
+        let subscriber = Subscriber::new(connection.clone(), subscribe.clone());
 
-        let client_state = ClientState { publisher };
+        let client_state = ClientState {
+            publisher,
+            subscriber,
+        };
 
         let router = router.build(client_state);
 
         let connect = Arc::new(Mutex::new(ConnectHandler::new()));
         let received_publish = Arc::new(Mutex::new(ReceivedPublishHandler::new(router)));
-        let subscribe = Arc::new(Mutex::new(SubscribeHandler::new()));
 
         Self {
             connection,
@@ -182,6 +186,45 @@ impl<S> Extractable<S> for Publisher {
         client_state: &ClientState,
     ) -> Result<Self, Self::Rejection> {
         Ok(client_state.publisher.clone())
+    }
+}
+
+#[derive(Clone)]
+pub struct Subscriber {
+    connection: Arc<Connection<OwnedReadHalf, OwnedWriteHalf>>,
+    subscribe: Arc<Mutex<SubscribeHandler>>,
+}
+
+impl Subscriber {
+    fn new(
+        connection: Arc<Connection<OwnedReadHalf, OwnedWriteHalf>>,
+        subscribe: Arc<Mutex<SubscribeHandler>>,
+    ) -> Self {
+        Self {
+            connection,
+            subscribe,
+        }
+    }
+
+    pub async fn subscribe(&self, topic: &str) {
+        let mut subscribe = Subscribe::new(topic, QoS::ExactlyOnce);
+
+        let future = self.subscribe.lock().await.subscribe(&mut subscribe);
+        let packet = Packet::Subscribe(subscribe);
+        self.connection.send(&packet).unwrap().await;
+        future.await;
+    }
+}
+
+impl<S> Extractable<S> for Subscriber {
+    type Rejection = Infallible;
+
+    fn extract(
+        _publish: &Publish,
+        _state: &S,
+        client_state: &ClientState,
+    ) -> Result<Self, Self::Rejection> {
+        Ok(client_state.subscriber.clone())
     }
 }
 

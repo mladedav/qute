@@ -2,7 +2,8 @@ use std::convert::Infallible;
 
 use mqttbytes::{v5::Publish, QoS};
 use qute::{
-    Client, ClientState, Extractable, FromState, HandlerRouterBuilder, Publisher, State, Topic,
+    Client, ClientState, Extractable, FromState, HandlerRouterBuilder, Publisher, State,
+    Subscriber, Topic,
 };
 use tokio::task::yield_now;
 use tracing_subscriber::util::SubscriberInitExt;
@@ -36,7 +37,6 @@ async fn run() {
     let client = Client::connect(router).await;
     client.subscribe("test").await;
     client.subscribe("foo/bar").await;
-    client.subscribe("callback").await;
 
     client.publish("test", QoS::AtMostOnce, b"hello").await;
     client
@@ -62,6 +62,7 @@ impl FromState<OuterState> for InnerState {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn foobar(
     _publish: Publish,
     qos: QoS,
@@ -70,6 +71,7 @@ async fn foobar(
     State(outer): State<OuterState>,
     State(inner): State<InnerState>,
     publisher: Publisher,
+    subscriber: Subscriber,
 ) {
     yield_now().await;
     tracing::warn!(
@@ -81,6 +83,8 @@ async fn foobar(
         "Async FOOBAR handler with quite a few extractors!"
     );
 
+    tracing::info!("Subscribing to new topic.");
+    subscriber.subscribe("callback").await;
     tracing::info!("Publishing stuff from handler.");
     publisher
         .publish("callback", QoS::AtLeastOnce, b"Real callback!")
