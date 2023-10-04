@@ -47,7 +47,9 @@ impl<S> HandlerRouterBuilder<S> {
     {
         let erased = handler.erased();
         let without_state = RouteHandler::WithoutState(erased.clone_boxed());
-        self.routes.insert(route.to_string(), without_state);
+        // Add leading slash so that catch-all works. This slash will also be added when handling PUBLISH packets.
+        let route = format!("/{route}");
+        self.routes.insert(route, without_state);
     }
 
     pub fn with_state<S2>(self, state: S) -> HandlerRouterBuilder<S2>
@@ -103,6 +105,14 @@ impl HandlerRouter {
 
         HandlerRouterWithClientState { inner: router }
     }
+
+    pub(crate) fn get_routes(&self) -> Vec<String> {
+        // Strip the leading slash
+        self.routes
+            .keys()
+            .map(|route| route[1..].to_string())
+            .collect()
+    }
 }
 
 pub(crate) struct HandlerRouterWithClientState {
@@ -111,7 +121,8 @@ pub(crate) struct HandlerRouterWithClientState {
 
 impl HandlerRouterWithClientState {
     pub(crate) fn handle(&mut self, publish: Publish) -> Option<HandlerFuture> {
-        if let Ok(router_match) = self.inner.at_mut(&publish.topic) {
+        let route = format!("/{}", publish.topic);
+        if let Ok(router_match) = self.inner.at_mut(&route) {
             let service = router_match.value;
             Some(HandlerFuture::new(service.clone(), publish))
         } else {

@@ -27,7 +27,9 @@ async fn run() {
     });
     let mut router = router.with_state(String::from("This is the state."));
 
-    router.add("foo/bar", foobar);
+    router.add("foo/:bar", foobar);
+    router.add("foobar/*rest", foobar);
+    router.add(":foo/bar", foobar);
     let mut router = router.with_state(OuterState(InnerState));
     router.add("callback", |publish: Publish| {
         tracing::warn!(?publish, "Callback handler!");
@@ -35,8 +37,6 @@ async fn run() {
     let router = router.build();
 
     let client = Client::connect(router).await;
-    client.subscribe("test").await;
-    client.subscribe("foo/bar").await;
 
     client.publish("test", QoS::AtMostOnce, b"hello").await;
     client
@@ -45,8 +45,20 @@ async fn run() {
     client
         .publish("test", QoS::ExactlyOnce, b"hello complicated world")
         .await;
-    client.publish("foo/bar", QoS::AtMostOnce, b"hello").await;
-    client.publish("foo", QoS::AtMostOnce, b"hello").await;
+    client.publish("foo", QoS::AtLeastOnce, b"hello").await;
+    client.publish("foo/bar", QoS::AtLeastOnce, b"hello").await;
+    client
+        .publish("foo/bar/baz", QoS::AtLeastOnce, b"hello")
+        .await;
+    client.publish("foo/foo", QoS::AtLeastOnce, b"hello").await;
+    client.publish("bar/bar", QoS::AtLeastOnce, b"hello").await;
+    client.publish("foobar", QoS::AtLeastOnce, b"hello").await;
+    client
+        .publish("foobar/baz", QoS::AtLeastOnce, b"hello")
+        .await;
+    client
+        .publish("foobar/baz/bax", QoS::AtLeastOnce, b"hello")
+        .await;
 
     tokio::time::sleep(std::time::Duration::from_secs(1)).await;
 }
@@ -71,7 +83,7 @@ async fn foobar(
     State(outer): State<OuterState>,
     State(inner): State<InnerState>,
     publisher: Publisher,
-    subscriber: Subscriber,
+    _subscriber: Subscriber,
 ) {
     yield_now().await;
     tracing::warn!(
@@ -84,7 +96,7 @@ async fn foobar(
     );
 
     tracing::info!("Subscribing to new topic.");
-    subscriber.subscribe("callback").await;
+    // subscriber.subscribe("callback").await;
     tracing::info!("Publishing stuff from handler.");
     publisher
         .publish("callback", QoS::AtLeastOnce, b"Real callback!")
