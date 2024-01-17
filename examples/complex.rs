@@ -56,7 +56,7 @@ async fn main() {
         .publish("foobar/baz/bax", QoS::AtLeastOnce, b"hello")
         .await;
 
-    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    client.shutdown().await;
 }
 
 #[derive(Clone, Debug)]

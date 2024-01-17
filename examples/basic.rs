@@ -15,4 +15,6 @@ async fn main() {
 
     // Send a test message that the client then handles.
     client.publish("test", QoS::AtMostOnce, b"hello").await;
+
+    client.shutdown().await;
 }

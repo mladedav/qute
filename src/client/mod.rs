@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use mqttbytes::{
-    v5::{Connect, Packet, Publish, Subscribe, SubscribeFilter},
+    v5::{Connect, Disconnect, Packet, Publish, Subscribe, SubscribeFilter},
     QoS,
 };
 use regex::Regex;
@@ -9,6 +9,7 @@ use tokio::net::{
     tcp::{OwnedReadHalf, OwnedWriteHalf},
     TcpStream,
 };
+use tokio_util::task::TaskTracker;
 
 use crate::{
     connection::Connection,
@@ -23,6 +24,7 @@ mod builder;
 #[derive(Clone)]
 pub struct Client {
     router: Router<OwnedReadHalf, OwnedWriteHalf>,
+    tracker: TaskTracker,
 }
 
 impl Client {
@@ -46,19 +48,26 @@ impl Client {
             })
             .collect();
         let router = Router::new(connection.clone(), publish_router);
+        let tracker = TaskTracker::new();
 
         tokio::spawn({
             let router = router.clone();
+            let tracker = tracker.clone();
             async move {
                 while let Some(packet) = connection.recv().await.unwrap() {
-                    tokio::spawn({
+                    tracker.spawn({
                         let router = router.clone();
                         async move {
                             router.route_received(packet).await;
                         }
                     });
                 }
-                tracing::warn!("Connection closed.");
+                tracing::debug!("Connection closed.");
+
+                tracker.close();
+                tracker.wait().await;
+
+                tracing::debug!("All tasks processed.");
             }
         });
 
@@ -72,7 +81,7 @@ impl Client {
         ));
         router.route_sent(subscribe).await;
 
-        Self { router }
+        Self { router, tracker }
     }
 
     pub async fn publish(&self, topic: &str, qos: QoS, payload: &[u8]) {
@@ -85,6 +94,13 @@ impl Client {
         let packet = Packet::Subscribe(Subscribe::new(topic, QoS::ExactlyOnce));
 
         self.router.route_sent(packet).await;
+    }
+
+    pub async fn shutdown(mut self) {
+        let packet = Packet::Disconnect(Disconnect::new());
+        self.router.route_sent(packet).await;
+        self.router.shutdown().await;
+        self.tracker.wait().await;
     }
 }
 

@@ -16,7 +16,8 @@ async fn main() {
     let client = ClientBuilder::new("127.0.0.1:1883").build(handlers).await;
 
     client.publish("test", QoS::AtMostOnce, b"hello").await;
-    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+
+    client.shutdown().await;
 }
 
 #[derive(Debug)]

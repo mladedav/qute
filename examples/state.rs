@@ -33,5 +33,5 @@ async fn main() {
         )
         .await;
 
-    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    client.shutdown().await;
 }

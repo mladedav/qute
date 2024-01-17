@@ -9,7 +9,7 @@ use std::{
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use mqttbytes::{v5::Packet, FixedHeader};
 use tokio::{
-    io::{AsyncRead, AsyncReadExt, AsyncWrite},
+    io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
     net::{
         tcp::{OwnedReadHalf, OwnedWriteHalf},
         TcpStream,
@@ -115,6 +115,10 @@ where
                 return Err(mqttbytes::Error::InsufficientBytes(usize::MAX));
             }
         }
+    }
+
+    pub async fn shutdown(&self) -> Result<(), std::io::Error> {
+        self.writer.lock().await.shutdown().await
     }
 }
 

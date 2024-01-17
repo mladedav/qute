@@ -120,6 +120,15 @@ where
             Packet::UnsubAck(_) => unreachable!("Client cannot send unsubscribe acknowledgement."),
         }
     }
+
+    pub async fn shutdown(&mut self) {
+        if let Err(error) = self.connection.shutdown().await {
+            tracing::warn!(
+                error.debug = format!("{error:?}"),
+                "Shutting down the connection resulted in an error.",
+            );
+        }
+    }
 }
 
 impl Router<OwnedReadHalf, OwnedWriteHalf> {
