@@ -52,8 +52,11 @@ where
         let responses = match packet {
             Packet::Connect(_) => unreachable!("Client cannot receive connect."),
             Packet::ConnAck(packet) => self.connect.lock().await.connack(packet),
-            Packet::Disconnect(_) => unreachable!("Client cannot receive disconnect."),
-
+            Packet::Disconnect(packet) => {
+                // We ignore disconnect packets for now. We should prevent the client from sending any more MQTT packets after this and close the connection. For now we just let the receiving control loop finish on its own after the connection is closed by the peer.
+                tracing::debug!(disconnect = ?packet, "DISCONNECT received.");
+                Vec::new()
+            }
             Packet::PingReq => unreachable!("Client cannot receive ping request."),
             Packet::PingResp => self.connect.lock().await.pong(),
 
