@@ -16,15 +16,22 @@ use crate::{
     subscribe::router::HandlerRouter,
 };
 
+pub use builder::ClientBuilder;
+
+mod builder;
+
 #[derive(Clone)]
 pub struct Client {
     router: Router<OwnedReadHalf, OwnedWriteHalf>,
 }
 
 impl Client {
-    pub async fn connect(publish_router: HandlerRouter) -> Self {
-        let stream = TcpStream::connect("127.0.0.1:1883").await.unwrap();
-        let connection = Arc::new(Connection::with_stream(stream));
+    async fn connect(
+        tcp_stream: TcpStream,
+        publish_router: HandlerRouter,
+        connect: Connect,
+    ) -> Self {
+        let connection = Arc::new(Connection::with_stream(tcp_stream));
 
         let single_wildcard = Regex::new(":[^/]*").unwrap();
         let multiple_wildcard = Regex::new(r"\*[^/]*$").unwrap();
@@ -55,7 +62,7 @@ impl Client {
             }
         });
 
-        let connect = Packet::Connect(Connect::new("qute"));
+        let connect = Packet::Connect(connect);
         router.route_sent(connect).await;
 
         let subscribe = Packet::Subscribe(Subscribe::new_many(

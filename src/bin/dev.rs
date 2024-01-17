@@ -2,7 +2,7 @@ use std::convert::Infallible;
 
 use mqttbytes::{v5::Publish, QoS};
 use qute::{
-    Client, ClientState, Extractable, FromState, HandlerRouterBuilder, Publisher, State,
+    ClientBuilder, ClientState, Extractable, FromState, HandlerRouterBuilder, Publisher, State,
     Subscriber, Topic,
 };
 use tokio::task::yield_now;
@@ -36,7 +36,7 @@ async fn run() {
     });
     let router = router.build();
 
-    let client = Client::connect(router).await;
+    let client = ClientBuilder::new("127.0.0.1:1883").build(router).await;
 
     client.publish("test", QoS::AtMostOnce, b"hello").await;
     client
