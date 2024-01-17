@@ -10,10 +10,6 @@ use tracing_subscriber::util::SubscriberInitExt;
 
 #[tokio::main]
 async fn main() {
-    run().await;
-}
-
-async fn run() {
     tracing_subscriber::fmt()
         .with_env_filter("qute=debug,info")
         .finish()
